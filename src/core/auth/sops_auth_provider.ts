@@ -17,17 +17,17 @@ export class SopsAuthProvider implements proxmox_auth_provider_i {
     this.secret_ref = params.secret_ref;
   }
 
-  public async GetAuthHeader(): Promise<string> {
-    const token = this.ResolveToken();
+  public async getAuthHeader(): Promise<string> {
+    const token = this.resolveToken();
     return `PVEAPIToken ${this.token_id}=${token}`;
   }
 
-  public async GetTokenFingerprint(): Promise<string> {
-    const token = this.ResolveToken();
+  public async getTokenFingerprint(): Promise<string> {
+    const token = this.resolveToken();
     return createHash("sha256").update(token).digest("hex").slice(0, 12);
   }
 
-  private ResolveToken(): string {
+  private resolveToken(): string {
     try {
       return ResolveSopsToken({
         secret_ref: this.secret_ref,

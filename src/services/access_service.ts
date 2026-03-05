@@ -72,7 +72,7 @@ export class AccessService {
       query.userid = auth_id;
     }
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/access/permissions",
       query,

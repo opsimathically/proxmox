@@ -23,23 +23,23 @@ Design goals:
 
 ### `datacenter_service` (`DatacenterService`)
 
-- `GetSummary`
-- `GetVersion`
-- `ListStorage`
+- `getSummary`
+- `getVersion`
+- `listStorage`
 
 ### `cluster_service` (`ClusterService`)
 
-- `GetStatus`
-- `GetMembership`
-- `ListNodes`
+- `getStatus`
+- `getMembership`
+- `listNodes`
 
 ### `node_service` (`NodeService`)
 
-- `ListNodes`
-- `GetNodeStatus`
-- `GetServices`
-- `GetNodeMetrics`
-- `RebootNode` (with optional task polling)
+- `listNodes`
+- `getNodeStatus`
+- `getServices`
+- `getNodeMetrics`
+- `rebootNode` (with optional task polling)
 
 ### `vm_service` (`VmService`)
 
@@ -279,19 +279,19 @@ Troubleshooting checklist:
 ### Initialize client with explicit config path
 
 ```ts
-import { ProxmoxClient } from "@opsimathically/proxmox";
+import { ProxmoxClient } from '@opsimathically/proxmox';
 
-const client = ProxmoxClient.FromPath({
-  config_path: "/home/tourist/environment_files/proxmoxlib.json",
-  profile_name: "default"
+const client = ProxmoxClient.fromPath({
+  config_path: '/home/tourist/environment_files/proxmoxlib.json',
+  profile_name: 'default'
 });
 ```
 
 ### Startup diagnostics
 
 ```ts
-const client = ProxmoxClient.FromPath({
-  config_path: "/home/tourist/environment_files/proxmoxlib.json",
+const client = ProxmoxClient.fromPath({
+  config_path: '/home/tourist/environment_files/proxmoxlib.json',
   emit_startup_diagnostics: true
 });
 ```
@@ -305,7 +305,7 @@ PROXMOXLIB_STARTUP_DIAGNOSTICS=true
 ### List nodes
 
 ```ts
-const nodes = await client.node_service.ListNodes();
+const nodes = await client.node_service.listNodes();
 for (const node of nodes.data) {
   console.log(node.node, node.status);
 }
@@ -314,12 +314,12 @@ for (const node of nodes.data) {
 ### List/read VMs
 
 ```ts
-const vm_list = await client.vm_service.listVms({ node_id: "g75" });
+const vm_list = await client.vm_service.listVms({ node_id: 'g75' });
 
 if (vm_list.data.length > 0) {
   const vm_id = vm_list.data[0].vmid as string | number;
   const vm = await client.vm_service.getVm({
-    node_id: "g75",
+    node_id: 'g75',
     vm_id
   });
   console.log(vm.data);
@@ -329,12 +329,14 @@ if (vm_list.data.length > 0) {
 ### List/read containers
 
 ```ts
-const container_list = await client.lxc_service.listContainers({ node_id: "g75" });
+const container_list = await client.lxc_service.listContainers({
+  node_id: 'g75'
+});
 
 if (container_list.data.length > 0) {
   const container_id = container_list.data[0].vmid as string | number;
   const container = await client.lxc_service.getContainer({
-    node_id: "g75",
+    node_id: 'g75',
     container_id
   });
   console.log(container.data);
@@ -344,22 +346,22 @@ if (container_list.data.length > 0) {
 ### Safe mutation flow behind explicit guard
 
 ```ts
-const execute_mutations = ["1", "true", "yes", "on"].includes(
-  (process.env.PROXMOX_EXAMPLE_EXECUTE_MUTATIONS ?? "").toLowerCase()
+const execute_mutations = ['1', 'true', 'yes', 'on'].includes(
+  (process.env.PROXMOX_EXAMPLE_EXECUTE_MUTATIONS ?? '').toLowerCase()
 );
 
 if (execute_mutations) {
   const can_power = await client.access_service.hasCurrentPrivilege({
-    path: "/vms/200",
-    privilege: "VM.PowerMgmt"
+    path: '/vms/200',
+    privilege: 'VM.PowerMgmt'
   });
 
   if (!can_power.data.allowed) {
-    throw new Error("Missing VM.PowerMgmt on /vms/200");
+    throw new Error('Missing VM.PowerMgmt on /vms/200');
   }
 
   await client.vm_service.startVm({
-    node_id: "g75",
+    node_id: 'g75',
     vm_id: 200
   });
 }
@@ -369,12 +371,12 @@ if (execute_mutations) {
 
 ```ts
 const root_permissions = await client.access_service.getCurrentPermissions({
-  path: "/"
+  path: '/'
 });
 
 const can_audit_vms = await client.access_service.hasCurrentPrivilege({
-  path: "/vms",
-  privilege: "VM.Audit"
+  path: '/vms',
+  privilege: 'VM.Audit'
 });
 
 console.log(root_permissions.data.privileges);
@@ -384,27 +386,28 @@ console.log(can_audit_vms.data.allowed);
 ### Permission introspection (target identity, admin scenario)
 
 ```ts
-import { ProxmoxAuthError } from "@opsimathically/proxmox";
+import { ProxmoxAuthError } from '@opsimathically/proxmox';
 
 const target_auth_id = process.env.PROXMOX_EXAMPLE_PERMISSION_TARGET_AUTH_ID;
 if (target_auth_id) {
   try {
-    const target_permissions = await client.access_service.getIdentityPermissions({
-      path: "/vms",
-      auth_id: target_auth_id
-    });
+    const target_permissions =
+      await client.access_service.getIdentityPermissions({
+        path: '/vms',
+        auth_id: target_auth_id
+      });
 
     const target_can_power = await client.access_service.hasIdentityPrivilege({
-      path: "/vms/200",
+      path: '/vms/200',
       auth_id: target_auth_id,
-      privilege: "VM.PowerMgmt"
+      privilege: 'VM.PowerMgmt'
     });
 
     console.log(target_permissions.data.privileges);
     console.log(target_can_power.data.allowed);
   } catch (error) {
     if (error instanceof ProxmoxAuthError && error.status_code === 403) {
-      console.warn("Not authorized to inspect target identity permissions.");
+      console.warn('Not authorized to inspect target identity permissions.');
     } else {
       throw error;
     }
@@ -432,22 +435,22 @@ import {
   ProxmoxError,
   ProxmoxAuthError,
   ProxmoxTimeoutError
-} from "@opsimathically/proxmox";
+} from '@opsimathically/proxmox';
 
 try {
-  const client = ProxmoxClient.FromPath({
-    config_path: "/home/tourist/environment_files/proxmoxlib.json"
+  const client = ProxmoxClient.fromPath({
+    config_path: '/home/tourist/environment_files/proxmoxlib.json'
   });
-  await client.node_service.ListNodes();
+  await client.node_service.listNodes();
 } catch (error) {
   if (error instanceof ProxmoxAuthError) {
-    console.error("Auth failed:", error.code);
+    console.error('Auth failed:', error.code);
   } else if (error instanceof ProxmoxTimeoutError) {
-    console.error("Request timeout:", error.code);
+    console.error('Request timeout:', error.code);
   } else if (error instanceof ProxmoxError) {
-    console.error("Proxmox error:", error.code, error.details);
+    console.error('Proxmox error:', error.code, error.details);
   } else {
-    console.error("Unexpected error");
+    console.error('Unexpected error');
   }
 }
 ```

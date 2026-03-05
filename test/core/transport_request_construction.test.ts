@@ -13,7 +13,7 @@ class FakeTransport implements prox_mox_http_transport_i {
   public context_base_url = "";
   public context_headers: Record<string, string> = {};
 
-  public async Request(params: {
+  public async request(params: {
     request: proxmox_http_request_t;
     context: {
       base_url: string;
@@ -79,7 +79,7 @@ test("Transport request construction sets safe URL, method, and auth header.", a
     },
   });
 
-  await request_client.Request({
+  await request_client.request({
     method: "GET",
     path: "/api2/json/nodes/node-a/qemu",
     node_id: "node-a",

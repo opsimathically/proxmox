@@ -66,7 +66,7 @@ export class VmService {
    */
   public async listVms(params: proxmox_vm_list_query_i = {}): Promise<proxmox_vm_list_response_t> {
     const query = BuildVmListQuery(params);
-    return this.request_client.Request<proxmox_vm_list_response_t["data"]>({
+    return this.request_client.request<proxmox_vm_list_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: query.path,
       node_id: query.node_id,
@@ -82,7 +82,7 @@ export class VmService {
   public async getVm(params: proxmox_vm_get_input_i): Promise<proxmox_vm_get_response_t> {
     const node_id = ValidateNodeId(params.node_id);
     const vm_id = ValidateVmId(params.vm_id, "vm_id");
-    return this.request_client.Request<proxmox_vm_get_response_t["data"]>({
+    return this.request_client.request<proxmox_vm_get_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/qemu/${encodeURIComponent(vm_id)}/status/current`,
       node_id,
@@ -102,7 +102,7 @@ export class VmService {
       body.vmid = vm_id;
     }
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/qemu`,
       node_id,
@@ -127,7 +127,7 @@ export class VmService {
   public async updateVm(params: proxmox_vm_update_input_i): Promise<proxmox_vm_task_result_t> {
     const reference = BuildVmReference(params);
     const body = BuildCreateUpdateBody(params.config, "update.config");
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "PUT" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}/config`,
       node_id: reference.node_id,
@@ -160,7 +160,7 @@ export class VmService {
       full: params.full,
       custom_config: body,
     });
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(source_reference.node_id)}/qemu/${encodeURIComponent(source_reference.vm_id)}/clone`,
       node_id: source_reference.node_id,
@@ -188,7 +188,7 @@ export class VmService {
       purge: params.purge,
       force: params.force,
     });
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "DELETE" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}`,
       node_id: reference.node_id,
@@ -212,7 +212,7 @@ export class VmService {
   public async startVm(params: proxmox_vm_start_input_i): Promise<proxmox_vm_task_started_t>;
   public async startVm(params: proxmox_vm_start_input_i): Promise<proxmox_vm_task_result_t> {
     const reference = BuildVmReference(params);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}/status/start`,
       node_id: reference.node_id,
@@ -234,7 +234,7 @@ export class VmService {
   public async stopVm(params: proxmox_vm_stop_input_i): Promise<proxmox_vm_task_started_t>;
   public async stopVm(params: proxmox_vm_stop_input_i): Promise<proxmox_vm_task_result_t> {
     const reference = BuildVmReference(params);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}/status/stop`,
       node_id: reference.node_id,
@@ -261,7 +261,7 @@ export class VmService {
   public async restartVm(params: proxmox_vm_restart_input_i): Promise<proxmox_vm_task_started_t>;
   public async restartVm(params: proxmox_vm_restart_input_i): Promise<proxmox_vm_task_result_t> {
     const reference = BuildVmReference(params);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}/status/reset`,
       node_id: reference.node_id,
@@ -294,7 +294,7 @@ export class VmService {
       });
     }
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/qemu/${encodeURIComponent(reference.vm_id)}/migrate`,
       node_id: reference.node_id,
@@ -333,9 +333,9 @@ export class VmService {
         },
       });
     }
-    const node_connection = this.request_client.ResolveNode(request_node_id);
-    const auth_header = await node_connection.auth_provider.GetAuthHeader();
-    return this.task_poller!.WaitForTaskCompletion({
+    const node_connection = this.request_client.resolveNode(request_node_id);
+    const auth_header = await node_connection.auth_provider.getAuthHeader();
+    return this.task_poller!.waitForTaskCompletion({
       node: request_node_id,
       task_id: params.task_id,
       host: node_connection.host,
@@ -377,9 +377,9 @@ export class VmService {
     }
 
     if (this.task_poller !== undefined && this.task_polling_enabled) {
-      const node_connection = this.request_client.ResolveNode(params.node_id);
-      const auth_header = await node_connection.auth_provider.GetAuthHeader();
-      const completed_task = await this.task_poller.WaitForTaskCompletion({
+      const node_connection = this.request_client.resolveNode(params.node_id);
+      const auth_header = await node_connection.auth_provider.getAuthHeader();
+      const completed_task = await this.task_poller.waitForTaskCompletion({
         node: params.node_id,
         task_id,
         host: node_connection.host,

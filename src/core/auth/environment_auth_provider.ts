@@ -16,7 +16,7 @@ export class EnvironmentAuthProvider implements proxmox_auth_provider_i {
     this.env_var = params.env_var;
   }
 
-  public async GetAuthHeader(): Promise<string> {
+  public async getAuthHeader(): Promise<string> {
     const secret = process.env[this.env_var];
     if (!secret || !secret.trim()) {
       throw new ProxmoxAuthError({
@@ -31,7 +31,7 @@ export class EnvironmentAuthProvider implements proxmox_auth_provider_i {
     return `PVEAPIToken ${this.token_id}=${secret.trim()}`;
   }
 
-  public async GetTokenFingerprint(): Promise<string> {
+  public async getTokenFingerprint(): Promise<string> {
     const secret = process.env[this.env_var];
     if (!secret) {
       throw new ProxmoxAuthError({

@@ -4,11 +4,11 @@ import {
 } from "../../types/proxmox_http_types";
 
 export interface proxmox_response_parser_i {
-  ParseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T>;
+  parseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T>;
 }
 
 export interface proxmox_api_parser_i {
-  ParseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T>;
+  parseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T>;
 }
 
 export type proxmox_response_parser_t = proxmox_api_parser_i;
@@ -58,7 +58,7 @@ function ToString(raw_value: unknown): string | undefined {
 }
 
 export class ProxmoxApiParser implements proxmox_api_parser_i {
-  public ParseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T> {
+  public parseResponse<T>(response: proxmox_http_response_t): proxmox_api_response_t<T> {
     let parsed: unknown = {};
     if (response.body) {
       try {

@@ -9,11 +9,11 @@ import { proxmox_api_response_t } from "../../src/types/proxmox_http_types";
 import { VmService } from "../../src/services/vm_service";
 
 class FakeAuthProvider {
-  public async GetAuthHeader(): Promise<string> {
+  public async getAuthHeader(): Promise<string> {
     return "PVEAPIToken root@pam!builder=token-value";
   }
 
-  public async GetTokenFingerprint(): Promise<string> {
+  public async getTokenFingerprint(): Promise<string> {
     return "fingerprint";
   }
 }
@@ -21,7 +21,7 @@ class FakeAuthProvider {
 class FakeRequestClient implements proxmox_request_client_i {
   public requests: proxmox_request_i[] = [];
 
-  public ResolveNode(): proxmox_node_connection_i {
+  public resolveNode(): proxmox_node_connection_i {
     return {
       node_id: "node-a",
       host: "pve-a",
@@ -31,7 +31,7 @@ class FakeRequestClient implements proxmox_request_client_i {
     };
   }
 
-  public async Request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
+  public async request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
     this.requests.push(params);
     return {
       data: "UPID:node-a:100:abcd" as T,

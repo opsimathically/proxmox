@@ -54,7 +54,7 @@ export class TaskPoller {
     this.max_poll_failures = 3;
   }
 
-  public async WaitForTaskCompletion(params: task_poller_input_params_i): Promise<proxmox_task_result_t> {
+  public async waitForTaskCompletion(params: task_poller_input_params_i): Promise<proxmox_task_result_t> {
     const interval_ms = params.options?.interval_ms ?? this.interval_ms;
     const timeout_ms = params.options?.timeout_ms ?? this.timeout_ms;
     const max_poll_failures = params.options?.max_poll_failures ?? this.max_poll_failures;
@@ -111,7 +111,7 @@ export class TaskPoller {
         ca_bundle_path: params.ca_bundle_path,
         request_timeout_ms: params.request_timeout_ms,
       };
-      const response = await this.transport.Request({
+      const response = await this.transport.request({
         request: {
           ...request,
           path: request.path,
@@ -120,7 +120,7 @@ export class TaskPoller {
       });
 
       if (response.status >= 200 && response.status < 300) {
-        const parsed = this.parser.ParseResponse<Record<string, unknown>>(response);
+        const parsed = this.parser.parseResponse<Record<string, unknown>>(response);
         const task_status = CoerceTaskStatus(parsed.data as Record<string, unknown>);
         if (task_status.status !== "running") {
           if (task_status.exit_status === "ERROR") {
@@ -171,7 +171,7 @@ export class TaskPoller {
     });
   }
 
-  public GetDefaultIntervalMs(): number {
+  public getDefaultIntervalMs(): number {
     return this.interval_ms;
   }
 }

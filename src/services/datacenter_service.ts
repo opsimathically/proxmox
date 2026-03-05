@@ -20,9 +20,9 @@ export class DatacenterService {
     this.request_client = params.request_client;
   }
 
-  public async GetSummary(params: proxmox_datacenter_summary_query_i = {}): Promise<proxmox_datacenter_summary_response_t> {
+  public async getSummary(params: proxmox_datacenter_summary_query_i = {}): Promise<proxmox_datacenter_summary_response_t> {
     const query = BuildDatacenterSummaryQuery(params);
-    return this.request_client.Request<proxmox_datacenter_summary_response_t["data"]>({
+    return this.request_client.request<proxmox_datacenter_summary_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/cluster/status",
       node_id: query.node_id,
@@ -30,21 +30,22 @@ export class DatacenterService {
     });
   }
 
-  public async GetVersion(): Promise<proxmox_datacenter_version_response_t> {
-    return this.request_client.Request<proxmox_datacenter_version_response_t["data"]>({
+  public async getVersion(): Promise<proxmox_datacenter_version_response_t> {
+    return this.request_client.request<proxmox_datacenter_version_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/version",
     });
   }
 
-  public async ListStorage(params: proxmox_datacenter_storage_query_i = {}): Promise<proxmox_datacenter_storage_response_t> {
+  public async listStorage(params: proxmox_datacenter_storage_query_i = {}): Promise<proxmox_datacenter_storage_response_t> {
     const query = BuildDatacenterStorageQuery(params);
-    return this.request_client.Request<proxmox_datacenter_storage_response_t["data"]>({
+    return this.request_client.request<proxmox_datacenter_storage_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/storage",
       query: query.raw_query,
     });
   }
+
 }
 
 function BuildDatacenterSummaryQuery(params: proxmox_datacenter_summary_query_i): {

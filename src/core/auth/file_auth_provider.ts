@@ -17,16 +17,16 @@ export class FileAuthProvider implements proxmox_auth_provider_i {
     this.file_path = params.file_path;
   }
 
-  public async GetAuthHeader(): Promise<string> {
-    return `PVEAPIToken ${this.token_id}=${this.ResolveToken()}`;
+  public async getAuthHeader(): Promise<string> {
+    return `PVEAPIToken ${this.token_id}=${this.resolveToken()}`;
   }
 
-  public async GetTokenFingerprint(): Promise<string> {
-    const token = this.ResolveToken();
+  public async getTokenFingerprint(): Promise<string> {
+    const token = this.resolveToken();
     return createHash("sha256").update(token).digest("hex").slice(0, 12);
   }
 
-  private ResolveToken(): string {
+  private resolveToken(): string {
     let raw_token: string;
     try {
       raw_token = readFileSync(this.file_path, "utf8");

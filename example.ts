@@ -294,12 +294,12 @@ async function Main(): Promise<void> {
     }
   });
 
-  const proxmox_client = ProxmoxClient.FromPath({
+  const proxmox_client = ProxmoxClient.fromPath({
     config_path: '/home/tourist/environment_files/proxmoxlib/proxmoxlib.json',
     profile_name: selected_profile.name
   });
 
-  const nodes_response = await proxmox_client.node_service.ListNodes();
+  const nodes_response = await proxmox_client.node_service.listNodes();
   const node_records = nodes_response.data;
   console.info(`[example] nodes_found=${node_records.length}`);
   for (const node_record of node_records) {

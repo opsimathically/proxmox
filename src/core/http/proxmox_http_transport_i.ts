@@ -1,7 +1,7 @@
 import { proxmox_http_request_t, proxmox_http_response_t } from "../../types/proxmox_http_types";
 
 export interface prox_mox_http_transport_i {
-  Request(
+  request(
     params: {
       request: proxmox_http_request_t;
       context: {

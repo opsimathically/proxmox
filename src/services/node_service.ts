@@ -43,9 +43,9 @@ export class NodeService {
     this.task_poll_options = params.task_poll_options;
   }
 
-  public async ListNodes(params: proxmox_node_list_query_i = {}): Promise<proxmox_node_list_response_t> {
+  public async listNodes(params: proxmox_node_list_query_i = {}): Promise<proxmox_node_list_response_t> {
     const query = BuildNodeListQuery(params);
-    return this.request_client.Request<proxmox_node_list_response_t["data"]>({
+    return this.request_client.request<proxmox_node_list_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/nodes",
       query: query.raw_query,
@@ -53,28 +53,28 @@ export class NodeService {
     });
   }
 
-  public async GetNodeStatus(params: proxmox_node_status_query_i): Promise<proxmox_node_status_response_t> {
+  public async getNodeStatus(params: proxmox_node_status_query_i): Promise<proxmox_node_status_response_t> {
     const node_id = ValidateNodeId(params.node_id);
-    return this.request_client.Request<proxmox_node_status_response_t["data"]>({
+    return this.request_client.request<proxmox_node_status_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/status`,
       node_id,
     });
   }
 
-  public async GetServices(params: proxmox_node_services_query_i): Promise<proxmox_node_services_response_t> {
+  public async getServices(params: proxmox_node_services_query_i): Promise<proxmox_node_services_response_t> {
     const node_id = ValidateNodeId(params.node_id);
-    return this.request_client.Request<proxmox_node_services_response_t["data"]>({
+    return this.request_client.request<proxmox_node_services_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/services`,
       node_id,
     });
   }
 
-  public async GetNodeMetrics(params: proxmox_node_metrics_request_i): Promise<proxmox_node_metrics_response_t> {
+  public async getNodeMetrics(params: proxmox_node_metrics_request_i): Promise<proxmox_node_metrics_response_t> {
     const node_id = ValidateNodeId(params.node_id);
     const query = BuildNodeMetricsQuery(params);
-    return this.request_client.Request<proxmox_node_metrics_response_t["data"]>({
+    return this.request_client.request<proxmox_node_metrics_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/rrddata`,
       node_id,
@@ -82,14 +82,14 @@ export class NodeService {
     });
   }
 
-  public async RebootNode(params: proxmox_node_reboot_input_i): Promise<proxmox_node_reboot_result_t> {
+  public async rebootNode(params: proxmox_node_reboot_input_i): Promise<proxmox_node_reboot_result_t> {
     const node_id = ValidateNodeId(params.node_id);
     const request_body = {
       command: "reboot",
       force: params.force === true ? 1 : 0,
     };
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/status`,
       node_id,
@@ -106,9 +106,9 @@ export class NodeService {
     }
 
     if (this.task_poller !== undefined && this.task_polling_enabled) {
-      const node_connection = this.request_client.ResolveNode(node_id);
-      const auth_header = await node_connection.auth_provider.GetAuthHeader();
-      const completed_task = await this.task_poller.WaitForTaskCompletion({
+      const node_connection = this.request_client.resolveNode(node_id);
+      const auth_header = await node_connection.auth_provider.getAuthHeader();
+      const completed_task = await this.task_poller.waitForTaskCompletion({
         node: node_id,
         task_id,
         host: node_connection.host,
@@ -139,6 +139,7 @@ export class NodeService {
       raw: response.data,
     };
   }
+
 }
 
 function ValidateNodeId(node_id: string): string {

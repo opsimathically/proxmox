@@ -63,7 +63,7 @@ export class LxcService {
    */
   public async listContainers(params: proxmox_lxc_list_query_i = {}): Promise<proxmox_lxc_list_response_t> {
     const query = BuildLxcListQuery(params);
-    return this.request_client.Request<proxmox_lxc_list_response_t["data"]>({
+    return this.request_client.request<proxmox_lxc_list_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: query.path,
       node_id: query.node_id,
@@ -81,7 +81,7 @@ export class LxcService {
    */
   public async getContainer(params: proxmox_lxc_reference_request_i): Promise<proxmox_lxc_get_response_t> {
     const normalized = BuildLxcReference(params);
-    return this.request_client.Request<proxmox_lxc_get_response_t["data"]>({
+    return this.request_client.request<proxmox_lxc_get_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(normalized.node_id)}/lxc/${encodeURIComponent(normalized.container_id)}/status/current`,
       node_id: normalized.node_id,
@@ -102,7 +102,7 @@ export class LxcService {
       body.vmid = container_id;
     }
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/lxc`,
       node_id,
@@ -126,7 +126,7 @@ export class LxcService {
   public async updateContainer(params: proxmox_lxc_update_input_i): Promise<proxmox_lxc_task_result_t> {
     const reference = BuildLxcReference(params);
     const body = BuildCreateUpdateBody(params.config, "update.config");
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "PUT" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/config`,
       node_id: reference.node_id,
@@ -153,7 +153,7 @@ export class LxcService {
       purge: params.purge,
       force: params.force,
     });
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "DELETE" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}`,
       node_id: reference.node_id,
@@ -176,7 +176,7 @@ export class LxcService {
   public async startContainer(params: proxmox_lxc_start_input_i): Promise<proxmox_lxc_task_started_t>;
   public async startContainer(params: proxmox_lxc_start_input_i): Promise<proxmox_lxc_task_result_t> {
     const reference = BuildLxcReference(params);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/status/start`,
       node_id: reference.node_id,
@@ -198,7 +198,7 @@ export class LxcService {
   public async stopContainer(params: proxmox_lxc_stop_input_i): Promise<proxmox_lxc_task_started_t>;
   public async stopContainer(params: proxmox_lxc_stop_input_i): Promise<proxmox_lxc_task_result_t> {
     const reference = BuildLxcReference(params);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/status/stop`,
       node_id: reference.node_id,
@@ -236,7 +236,7 @@ export class LxcService {
       });
     }
 
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/migrate`,
       node_id: reference.node_id,
@@ -264,7 +264,7 @@ export class LxcService {
   public async snapshotContainer(params: proxmox_lxc_snapshot_input_i): Promise<proxmox_lxc_task_result_t> {
     const reference = BuildLxcReference(params);
     const snapshot_name = ValidateSnapshotName(params.snapshot_name);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/snapshot`,
       node_id: reference.node_id,
@@ -293,7 +293,7 @@ export class LxcService {
   public async restoreContainer(params: proxmox_lxc_restore_input_i): Promise<proxmox_lxc_task_result_t> {
     const reference = BuildLxcReference(params);
     const snapshot_name = ValidateSnapshotName(params.snapshot_name);
-    const response = await this.request_client.Request<unknown>({
+    const response = await this.request_client.request<unknown>({
       method: "POST" as proxmox_http_method_t,
       path: `/api2/json/nodes/${encodeURIComponent(reference.node_id)}/lxc/${encodeURIComponent(reference.container_id)}/snapshot/${encodeURIComponent(snapshot_name)}/rollback`,
       node_id: reference.node_id,
@@ -330,9 +330,9 @@ export class LxcService {
         },
       });
     }
-    const node_connection = this.request_client.ResolveNode(request_node_id);
-    const auth_header = await node_connection.auth_provider.GetAuthHeader();
-    return this.task_poller!.WaitForTaskCompletion({
+    const node_connection = this.request_client.resolveNode(request_node_id);
+    const auth_header = await node_connection.auth_provider.getAuthHeader();
+    return this.task_poller!.waitForTaskCompletion({
       node: request_node_id,
       task_id: params.task_id,
       host: node_connection.host,
@@ -373,9 +373,9 @@ export class LxcService {
     }
 
     if (this.task_poller !== undefined && this.task_polling_enabled) {
-      const node_connection = this.request_client.ResolveNode(params.node_id);
-      const auth_header = await node_connection.auth_provider.GetAuthHeader();
-      const completed_task = await this.task_poller.WaitForTaskCompletion({
+      const node_connection = this.request_client.resolveNode(params.node_id);
+      const auth_header = await node_connection.auth_provider.getAuthHeader();
+      const completed_task = await this.task_poller.waitForTaskCompletion({
         node: params.node_id,
         task_id,
         host: node_connection.host,

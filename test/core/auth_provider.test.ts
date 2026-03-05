@@ -129,8 +129,8 @@ test("BuildAuthProvider returns the env provider when configured.", async () => 
         },
       });
 
-      assert.equal(await provider.GetAuthHeader(), "PVEAPIToken root@pam!builder=token_value");
-      assert.equal((await provider.GetTokenFingerprint()).length, 12);
+      assert.equal(await provider.getAuthHeader(), "PVEAPIToken root@pam!builder=token_value");
+      assert.equal((await provider.getTokenFingerprint()).length, 12);
     },
   });
 });
@@ -150,7 +150,7 @@ test("BuildAuthProvider throws auth error when env var is missing.", async () =>
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /missing/i,
@@ -173,8 +173,8 @@ test("BuildAuthProvider loads token from file and derives header.", async () => 
     },
   });
 
-  assert.equal(await provider.GetAuthHeader(), "PVEAPIToken root@pam!builder=file_token_value");
-  assert.equal((await provider.GetTokenFingerprint()).length, 12);
+  assert.equal(await provider.getAuthHeader(), "PVEAPIToken root@pam!builder=file_token_value");
+  assert.equal((await provider.getTokenFingerprint()).length, 12);
 
   rmSync(scratch_dir, { recursive: true, force: true });
 });
@@ -189,7 +189,7 @@ test("BuildAuthProvider rejects unresolved file token path.", async () => {
   });
 
   await assert.rejects(
-    async () => provider.GetAuthHeader(),
+    async () => provider.getAuthHeader(),
     {
       name: "ProxmoxAuthError",
       message: /Could not read auth token/i,
@@ -246,7 +246,7 @@ test("BuildAuthProvider surfaces missing VAULT_ADDR for vault provider.", async 
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /VAULT_ADDR is required/i,
@@ -272,7 +272,7 @@ test("BuildAuthProvider surfaces missing VAULT_TOKEN for vault provider.", async
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /VAULT_TOKEN is required/i,
@@ -306,7 +306,7 @@ test("BuildAuthProvider surfaces vault HTTP non-success responses.", async () =>
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /Vault secret lookup request failed/i,
@@ -342,7 +342,7 @@ test("BuildAuthProvider rejects malformed Vault response JSON.", async () => {
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /not valid JSON/i,
@@ -384,7 +384,7 @@ test("BuildAuthProvider rejects missing Vault secret field.", async () => {
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /field was missing or invalid/i,
@@ -426,7 +426,7 @@ test("BuildAuthProvider rejects empty Vault token field.", async () => {
       });
 
       await assert.rejects(
-        async () => provider.GetAuthHeader(),
+        async () => provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /token field was empty/i,
@@ -468,10 +468,10 @@ test("BuildAuthProvider resolves Vault token for auth header and fingerprint.", 
       });
 
       assert.equal(
-        await provider.GetAuthHeader(),
+        await provider.getAuthHeader(),
         "PVEAPIToken root@pam!builder=vault_token_value",
       );
-      assert.equal((await provider.GetTokenFingerprint()).length, 12);
+      assert.equal((await provider.getTokenFingerprint()).length, 12);
       assert.equal(vault_server.requests.length >= 1, true);
       assert.equal(vault_server.requests[0].headers["x-vault-token"], "vault-access-token");
       assert.equal(vault_server.requests[0].headers["x-vault-namespace"], "opsimathically/prod");
@@ -528,7 +528,7 @@ test("BuildAuthProvider surfaces sops decrypt failures as auth errors.", { concu
       });
 
       await assert.rejects(
-        async () => sops_provider.GetAuthHeader(),
+        async () => sops_provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /Could not decrypt auth token using SOPS/i,
@@ -551,7 +551,7 @@ test("BuildAuthProvider rejects empty sops decrypted token.", { concurrency: fal
       });
 
       await assert.rejects(
-        async () => sops_provider.GetAuthHeader(),
+        async () => sops_provider.getAuthHeader(),
         {
           name: "ProxmoxAuthError",
           message: /token was empty/i,
@@ -574,10 +574,10 @@ test("BuildAuthProvider resolves sops decrypted token for auth header and finger
       });
 
       assert.equal(
-        await sops_provider.GetAuthHeader(),
+        await sops_provider.getAuthHeader(),
         "PVEAPIToken root@pam!builder=sops_token_value",
       );
-      assert.equal((await sops_provider.GetTokenFingerprint()).length, 12);
+      assert.equal((await sops_provider.getTokenFingerprint()).length, 12);
     },
   });
 });

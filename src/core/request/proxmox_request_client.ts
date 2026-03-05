@@ -46,8 +46,8 @@ export interface proxmox_request_i {
 }
 
 export interface proxmox_request_client_i {
-  Request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>>;
-  ResolveNode(node_id?: string): proxmox_node_connection_i;
+  request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>>;
+  resolveNode(node_id?: string): proxmox_node_connection_i;
 }
 
 export class ProxmoxRequestClient implements proxmox_request_client_i {
@@ -71,7 +71,7 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
     this.default_headers = params.default_headers;
   }
 
-  public ResolveNode(node_id?: string): proxmox_node_connection_i {
+  public resolveNode(node_id?: string): proxmox_node_connection_i {
     if (this.nodes.length === 0) {
       throw new ProxmoxValidationError({
         code: "proxmox.config.cluster_not_found",
@@ -105,8 +105,8 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
     return selected_node;
   }
 
-  public async Request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
-    return this.SendWithRetry<T>({
+  public async request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
+    return this.sendWithRetry<T>({
       method: params.method,
       path: params.path,
       node_id: params.node_id,
@@ -119,14 +119,14 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
     });
   }
 
-  private async SendWithRetry<T>(params: proxmox_request_i & { attempt_number: number }): Promise<proxmox_api_response_t<T>> {
-    const selected_node = this.ResolveNode(params.node_id);
+  private async sendWithRetry<T>(params: proxmox_request_i & { attempt_number: number }): Promise<proxmox_api_response_t<T>> {
+    const selected_node = this.resolveNode(params.node_id);
     const normalized_path = BuildApiPath(params.path);
     const request: proxmox_http_request_t = {
       method: params.method,
       path: normalized_path,
       query: params.query,
-      headers: await this.BuildHeaders({
+      headers: await this.buildHeaders({
         node: selected_node,
         headers: params.headers,
       }),
@@ -150,13 +150,13 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
     };
 
     try {
-      const raw_response = await this.transport.Request({
+      const raw_response = await this.transport.request({
         request,
         context: transport_context,
       });
 
       if (raw_response.status < 200 || raw_response.status >= 300) {
-        const parsed_error = this.parser.ParseResponse<unknown>(raw_response);
+        const parsed_error = this.parser.parseResponse<unknown>(raw_response);
         const message = typeof parsed_error.message === "string"
           ? parsed_error.message
           : typeof parsed_error.data === "string"
@@ -170,7 +170,7 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
         });
       }
 
-      return this.parser.ParseResponse<T>(raw_response);
+      return this.parser.parseResponse<T>(raw_response);
     } catch (error) {
       const should_retry = params.retry_allowed === false
         ? { should_retry: false, delay_ms: 0 }
@@ -183,14 +183,14 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
         throw error;
       }
       await SleepMs(should_retry.delay_ms);
-      return this.SendWithRetry<T>({
+      return this.sendWithRetry<T>({
         ...params,
         attempt_number: params.attempt_number + 1,
       });
     }
   }
 
-  private async BuildHeaders(params: {
+  private async buildHeaders(params: {
     node: proxmox_node_connection_i;
     headers?: Record<string, string>;
   }): Promise<Record<string, string>> {
@@ -217,7 +217,7 @@ async function ResolveAuthHeader(node: proxmox_node_connection_i): Promise<strin
       },
     });
   }
-  return node.auth_provider.GetAuthHeader();
+  return node.auth_provider.getAuthHeader();
 }
 
 function BuildApiPath(raw_path: string): string {

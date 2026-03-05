@@ -19,28 +19,29 @@ export class ClusterService {
     this.request_client = params.request_client;
   }
 
-  public async GetStatus(): Promise<proxmox_cluster_status_response_t> {
-    return this.request_client.Request<proxmox_cluster_status_response_t["data"]>({
+  public async getStatus(): Promise<proxmox_cluster_status_response_t> {
+    return this.request_client.request<proxmox_cluster_status_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/cluster/status",
     });
   }
 
-  public async GetMembership(): Promise<proxmox_cluster_membership_response_t> {
-    return this.request_client.Request<proxmox_cluster_membership_response_t["data"]>({
+  public async getMembership(): Promise<proxmox_cluster_membership_response_t> {
+    return this.request_client.request<proxmox_cluster_membership_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/cluster/members",
     });
   }
 
-  public async ListNodes(params: proxmox_cluster_nodes_query_i = {}): Promise<proxmox_cluster_nodes_response_t> {
+  public async listNodes(params: proxmox_cluster_nodes_query_i = {}): Promise<proxmox_cluster_nodes_response_t> {
     const query = BuildListNodesQuery(params);
-    return this.request_client.Request<proxmox_cluster_nodes_response_t["data"]>({
+    return this.request_client.request<proxmox_cluster_nodes_response_t["data"]>({
       method: "GET" as proxmox_http_method_t,
       path: "/api2/json/cluster/nodes",
       query: query.raw_query,
     });
   }
+
 }
 
 function BuildListNodesQuery(params: proxmox_cluster_nodes_query_i): {

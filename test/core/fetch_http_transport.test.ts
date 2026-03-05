@@ -82,7 +82,7 @@ test("FetchHttpTransport applies ca_bundle_path to HTTPS agent.", async () => {
       keep_alive_ms_default: 30000,
       https_request_impl: https_request_stub,
     });
-    const response = await transport.Request({
+    const response = await transport.request({
       request: {
         method: "GET",
         path: "/api2/json/version",
@@ -117,7 +117,7 @@ test("FetchHttpTransport reports transport error when ca_bundle_path cannot be r
   });
 
   await assert.rejects(
-    async () => transport.Request({
+    async () => transport.request({
       request: {
         method: "GET",
         path: "/api2/json/version",
@@ -159,7 +159,7 @@ test("FetchHttpTransport supports verify_tls false for HTTPS requests.", async (
     keep_alive_ms_default: 30000,
     https_request_impl: https_request_stub,
   });
-  const response = await transport.Request({
+  const response = await transport.request({
     request: {
       method: "GET",
       path: "/api2/json/version",
@@ -204,7 +204,7 @@ test("FetchHttpTransport avoids TLS-only options for HTTP requests.", async () =
     keep_alive_ms_default: 30000,
     http_request_impl: http_request_stub,
   });
-  const response = await transport.Request({
+  const response = await transport.request({
     request: {
       method: "GET",
       path: "/api2/json/version",

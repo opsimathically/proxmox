@@ -39,7 +39,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
     this.https_request_impl = params.https_request_impl ?? https.request;
   }
 
-  public async Request(params: {
+  public async request(params: {
     request: proxmox_http_request_t;
     context: {
       base_url: string;
@@ -75,7 +75,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
       const ca_bundle = is_https && context.ca_bundle_path
         ? readFileSync(context.ca_bundle_path, "utf8")
         : undefined;
-      const response = await this.PerformRequest({
+      const response = await this.performRequest({
         request_url,
         request_method: request.method,
         request_headers: {
@@ -117,7 +117,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
     }
   }
 
-  private async PerformRequest(params: {
+  private async performRequest(params: {
     request_url: URL;
     request_method: string;
     request_headers: Record<string, string>;
@@ -137,12 +137,12 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
       ? this.https_request_impl
       : this.http_request_impl;
     const request_agent = is_https
-      ? this.ResolveHttpsAgent({
+      ? this.resolveHttpsAgent({
         keep_alive_ms: params.keep_alive_ms,
         verify_tls: params.verify_tls,
         ca_bundle: params.ca_bundle,
       })
-      : this.ResolveHttpAgent({
+      : this.resolveHttpAgent({
         keep_alive_ms: params.keep_alive_ms,
       });
 
@@ -192,7 +192,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
     });
   }
 
-  private ResolveHttpAgent(params: { keep_alive_ms: number }): http.Agent {
+  private resolveHttpAgent(params: { keep_alive_ms: number }): http.Agent {
     const cache_key = String(params.keep_alive_ms);
     const cached_agent = this.http_agent_cache.get(cache_key);
     if (cached_agent !== undefined) {
@@ -207,7 +207,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
     return agent;
   }
 
-  private ResolveHttpsAgent(params: {
+  private resolveHttpsAgent(params: {
     keep_alive_ms: number;
     verify_tls: boolean;
     ca_bundle?: string;

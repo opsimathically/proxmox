@@ -69,7 +69,7 @@ export class ProxmoxClient {
       config: this.config,
       profile_name: this.profile_name,
     });
-    this.cluster = this.ResolveCluster({
+    this.cluster = this.resolveCluster({
       profile: this.profile,
       config: this.config,
     });
@@ -80,8 +80,8 @@ export class ProxmoxClient {
         request_timeout_ms_default: this.profile.transport.request_timeout_ms,
       });
     this.parser = params.parser ?? new ProxmoxApiParser();
-    this.request_client = this.BuildRequestClient();
-    this.task_poller = params.task_poller ?? this.BuildTaskPoller();
+    this.request_client = this.buildRequestClient();
+    this.task_poller = params.task_poller ?? this.buildTaskPoller();
 
     this.datacenter_service = new DatacenterService({
       request_client: this.request_client,
@@ -124,7 +124,7 @@ export class ProxmoxClient {
     });
   }
 
-  public static FromPath(params: proxmox_client_factory_i = {}): ProxmoxClient {
+  public static fromPath(params: proxmox_client_factory_i = {}): ProxmoxClient {
     const config_path = ResolveConfigPath(params.config_path);
     const diagnostics_requested = params.emit_startup_diagnostics === true
       || ["1", "true", "yes", "on"].includes((process.env.PROXMOXLIB_STARTUP_DIAGNOSTICS ?? "").toLowerCase());
@@ -148,7 +148,7 @@ export class ProxmoxClient {
     });
   }
 
-  private ResolveCluster(params: {
+  private resolveCluster(params: {
     profile: proxmox_profile_resolved_t;
     config: proxmoxlib_resolved_config_t;
   }): proxmox_cluster_t {
@@ -166,7 +166,7 @@ export class ProxmoxClient {
     return cluster;
   }
 
-  private BuildTaskPoller(): TaskPoller | undefined {
+  private buildTaskPoller(): TaskPoller | undefined {
     if (!this.profile.task_poller.enabled) {
       return undefined;
     }
@@ -177,7 +177,7 @@ export class ProxmoxClient {
     });
   }
 
-  private BuildRequestClient(): proxmox_request_client_i {
+  private buildRequestClient(): proxmox_request_client_i {
     const nodes = this.cluster.nodes.map((proxmox_node: proxmox_node_t) => {
       const verify_tls = proxmox_node.verify_tls ?? this.profile.transport.verify_tls;
       const ca_bundle_path = proxmox_node.ca_bundle_path ?? this.profile.transport.ca_bundle_path;

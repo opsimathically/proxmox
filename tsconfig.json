@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
     "target": "es2020",
     "lib": ["ESNext"],
     "experimentalDecorators": true,

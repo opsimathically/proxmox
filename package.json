@@ -1,12 +1,26 @@
 {
-  "name": "@opsimathically/set_project_name",
+  "name": "@opsimathically/proxmox",
   "version": "0.0.1",
-  "description": "Set project description.",
+  "description": "Typescript library for interacting with proxmox clusters.",
+  "sideEffects": false,
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.txt"
+  ],
   "scripts": {
-    "build": "npx ts-to-zod && tsup",
+    "build": "npx ts-to-zod --all && tsup",
     "test": "node --require ts-node/register --require tsconfig-paths/register --test test/**/*.test.ts",
     "ts-to-zod": "npx ts-to-zod",
     "docs": "typedoc"
@@ -14,7 +28,7 @@
   "keywords": [
     "set_keywords"
   ],
-  "homepage": "https://github.com/opsimathically/set_project_name",
+  "homepage": "https://github.com/opsimathically/proxmox",
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.1",
@@ -37,7 +51,7 @@
   "license": "SEE LICENSE IN LICENSE.txt",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/opsimathically/set_project_name.git"
+    "url": "git+https://github.com/opsimathically/proxmox.git"
   },
   "publishConfig": {
     "access": "public"

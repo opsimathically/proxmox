@@ -10,6 +10,7 @@ This SDK provides typed clients for common Proxmox domains:
 - cluster
 - pool
 - node
+- storage
 - virtual machines (QEMU)
 - containers (LXC)
 - access/privilege introspection
@@ -102,33 +103,6 @@ Design goals:
 - `canAllocateTemplate`
 - `canAllocateSpace`
 - `canModifyPermissions`
-
-## Breaking change: camelCase only
-
-PascalCase method aliases were removed. Use camelCase methods only.
-
-Migration map:
-
-- `ProxmoxClient.FromPath` -> `ProxmoxClient.fromPath`
-- `DatacenterService.GetSummary` -> `DatacenterService.getSummary`
-- `DatacenterService.GetVersion` -> `DatacenterService.getVersion`
-- `DatacenterService.ListStorage` -> `DatacenterService.listStorage`
-- `ClusterService.GetStatus` -> `ClusterService.getStatus`
-- `ClusterService.GetMembership` -> `ClusterService.getMembership`
-- `ClusterService.ListNodes` -> `ClusterService.listNodes`
-- `NodeService.ListNodes` -> `NodeService.listNodes`
-- `NodeService.GetNodeStatus` -> `NodeService.getNodeStatus`
-- `NodeService.GetServices` -> `NodeService.getServices`
-- `NodeService.GetNodeMetrics` -> `NodeService.getNodeMetrics`
-- `NodeService.RebootNode` -> `NodeService.rebootNode`
-- `ProxmoxRequestClient.Request` -> `ProxmoxRequestClient.request`
-- `ProxmoxRequestClient.ResolveNode` -> `ProxmoxRequestClient.resolveNode`
-- `TaskPoller.WaitForTaskCompletion` -> `TaskPoller.waitForTaskCompletion`
-- `TaskPoller.GetDefaultIntervalMs` -> `TaskPoller.getDefaultIntervalMs`
-- `FetchHttpTransport.Request` -> `FetchHttpTransport.request`
-- `AuthProvider.GetAuthHeader` -> `AuthProvider.getAuthHeader`
-- `AuthProvider.GetTokenFingerprint` -> `AuthProvider.getTokenFingerprint`
-- `ProxmoxApiParser.ParseResponse` -> `ProxmoxApiParser.parseResponse`
 
 ## Installation and requirements
 
@@ -572,10 +546,16 @@ if (execute_mutations) {
 }
 ```
 
-`example.ts` storage toggle env vars:
+`example.ts` env vars:
 
-- `PROXMOX_EXAMPLE_STORAGE_ID` (default: `local`)
+- `PROXMOXLIB_PROFILE` (optional profile override)
+- `PROXMOX_EXAMPLE_NODE_ID` (optional preferred node override)
 - `PROXMOX_EXAMPLE_POOL_ID` (optional pool ID for `getPool`/`listPoolResources` example)
+- `PROXMOX_EXAMPLE_VM_ID` (optional VM ID for VM path selection/create flow)
+- `PROXMOX_EXAMPLE_VM_NAME` (optional VM name for create flow)
+- `PROXMOX_EXAMPLE_PERMISSION_TARGET_AUTH_ID` (optional auth ID for target identity permission checks)
+- `PROXMOX_EXAMPLE_EXECUTE_MUTATIONS` (set true to enable mutation examples)
+- `PROXMOX_EXAMPLE_STORAGE_ID` (default: `local`)
 - `PROXMOX_EXAMPLE_REQUESTED_CORES` (optional positive integer for `canAllocateCores` preflight example)
 - `PROXMOX_EXAMPLE_REQUESTED_MEMORY_BYTES` (optional positive integer for `canAllocateMemory` preflight examples)
 - `PROXMOX_EXAMPLE_STORAGE_BACKUP_VMID` (optional `listBackups` filter)

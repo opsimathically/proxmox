@@ -49,6 +49,14 @@ export interface proxmox_node_status_record_i {
   node?: string;
   uptime?: number;
   status?: string;
+  cpus?: number;
+  cpuinfo?: {
+    cpus?: number | string;
+    cores?: number | string;
+    sockets?: number | string;
+    model?: string;
+    [key: string]: unknown;
+  };
   loadavg?: {
     [key: string]: unknown;
   };
@@ -157,6 +165,10 @@ export interface proxmox_lxc_list_query_i {
   running?: boolean;
   full?: boolean;
   pool?: string;
+}
+
+export interface proxmox_pool_reference_query_i {
+  pool_id: string;
 }
 
 export interface proxmox_access_permissions_query_i {
@@ -362,6 +374,21 @@ export interface proxmox_node_status_query_i {
   node_id: string;
 }
 
+export interface proxmox_node_memory_capacity_query_i {
+  node_id: string;
+}
+
+export interface proxmox_node_memory_allocation_query_i {
+  node_id: string;
+  include_stopped?: boolean;
+}
+
+export interface proxmox_node_memory_preflight_input_i {
+  node_id: string;
+  requested_memory_bytes: number;
+  mode?: "free_headroom" | "allocated_headroom";
+}
+
 export interface proxmox_node_services_query_i {
   node_id: string;
 }
@@ -379,6 +406,16 @@ export interface proxmox_node_reboot_input_i {
   wait_for_task?: boolean;
   force?: boolean;
   timeout_ms?: number;
+}
+
+export interface proxmox_node_cpu_capacity_query_i {
+  node_id: string;
+}
+
+export interface proxmox_node_core_preflight_input_i {
+  node_id: string;
+  requested_cores: number;
+  mode?: "logical" | "physical";
 }
 
 export interface proxmox_datacenter_summary_request_i {
@@ -426,6 +463,96 @@ export interface proxmox_access_privilege_check_record_i {
   privilege: string;
   allowed: boolean;
   privileges: proxmox_access_privileges_t;
+}
+
+export interface proxmox_pool_record_i {
+  pool_id: string;
+  comment?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_pool_resource_record_i {
+  id?: string;
+  type?: string;
+  vmid?: string | number;
+  name?: string;
+  node?: string;
+  pool?: string;
+  status?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_pool_detail_record_i extends proxmox_pool_record_i {
+  members: proxmox_pool_resource_record_i[];
+}
+
+export interface proxmox_node_cpu_capacity_source_record_i {
+  logical_cpu_count?: string;
+  physical_core_count?: string;
+  sockets?: string;
+  model?: string;
+}
+
+export interface proxmox_node_cpu_capacity_record_i {
+  node_id: string;
+  logical_cpu_count?: number;
+  physical_core_count?: number;
+  sockets?: number;
+  model?: string;
+  source_fields: proxmox_node_cpu_capacity_source_record_i;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_node_core_preflight_record_i {
+  node_id: string;
+  mode: "logical" | "physical";
+  requested_cores: number;
+  available_cores?: number;
+  allowed: boolean;
+  reason: "within_limit" | "exceeds_limit" | "capacity_unknown";
+}
+
+export interface proxmox_node_memory_capacity_source_record_i {
+  total_memory_bytes?: string;
+  used_memory_bytes?: string;
+  free_memory_bytes?: string;
+}
+
+export interface proxmox_node_memory_capacity_record_i {
+  node_id: string;
+  total_memory_bytes?: number;
+  used_memory_bytes?: number;
+  free_memory_bytes?: number;
+  source_fields: proxmox_node_memory_capacity_source_record_i;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_node_memory_allocation_resource_record_i {
+  resource_type: "qemu" | "lxc";
+  resource_id: string;
+  name?: string;
+  status?: string;
+  memory_used_bytes?: number;
+  memory_limit_bytes?: number;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_node_memory_allocation_record_i {
+  node_id: string;
+  include_stopped: boolean;
+  resource_count: number;
+  allocated_memory_bytes_total: number;
+  used_memory_bytes_total: number;
+  resources: proxmox_node_memory_allocation_resource_record_i[];
+}
+
+export interface proxmox_node_memory_preflight_record_i {
+  node_id: string;
+  mode: "free_headroom" | "allocated_headroom";
+  requested_memory_bytes: number;
+  available_memory_bytes?: number;
+  allowed: boolean;
+  reason: "within_limit" | "exceeds_limit" | "capacity_unknown";
 }
 
 export interface proxmox_storage_content_record_i {
@@ -497,6 +624,14 @@ export type proxmox_node_metrics_t = proxmox_node_metrics_record_i[];
 export type proxmox_node_reboot_started_t = proxmox_task_wait_record_i;
 export type proxmox_node_reboot_completed_t = proxmox_task_completed_record_i;
 export type proxmox_node_reboot_result_t = proxmox_node_reboot_started_t | proxmox_node_reboot_completed_t;
+export type proxmox_node_cpu_capacity_source_t = proxmox_node_cpu_capacity_source_record_i;
+export type proxmox_node_cpu_capacity_t = proxmox_node_cpu_capacity_record_i;
+export type proxmox_node_core_preflight_t = proxmox_node_core_preflight_record_i;
+export type proxmox_node_memory_capacity_source_t = proxmox_node_memory_capacity_source_record_i;
+export type proxmox_node_memory_capacity_t = proxmox_node_memory_capacity_record_i;
+export type proxmox_node_memory_allocation_resource_t = proxmox_node_memory_allocation_resource_record_i;
+export type proxmox_node_memory_allocation_t = proxmox_node_memory_allocation_record_i;
+export type proxmox_node_memory_preflight_t = proxmox_node_memory_preflight_record_i;
 
 export type proxmox_datacenter_summary_response_t = proxmox_api_response_t<proxmox_datacenter_summary_t>;
 export type proxmox_datacenter_version_response_t = proxmox_api_response_t<proxmox_datacenter_version_t>;
@@ -509,8 +644,21 @@ export type proxmox_node_status_response_t = proxmox_api_response_t<proxmox_node
 export type proxmox_node_services_response_t = proxmox_api_response_t<proxmox_node_services_t>;
 export type proxmox_node_metrics_response_t = proxmox_api_response_t<proxmox_node_metrics_t>;
 export type proxmox_node_reboot_response_t = proxmox_api_response_t<proxmox_node_reboot_result_t>;
+export type proxmox_node_cpu_capacity_response_t = proxmox_api_response_t<proxmox_node_cpu_capacity_t>;
+export type proxmox_node_core_preflight_response_t = proxmox_api_response_t<proxmox_node_core_preflight_t>;
+export type proxmox_node_memory_capacity_response_t = proxmox_api_response_t<proxmox_node_memory_capacity_t>;
+export type proxmox_node_memory_allocation_response_t = proxmox_api_response_t<proxmox_node_memory_allocation_t>;
+export type proxmox_node_memory_preflight_response_t = proxmox_api_response_t<proxmox_node_memory_preflight_t>;
 export type proxmox_access_permissions_response_t = proxmox_api_response_t<proxmox_access_permissions_record_i>;
 export type proxmox_access_privilege_check_response_t = proxmox_api_response_t<proxmox_access_privilege_check_record_i>;
+export type proxmox_pool_record_t = proxmox_pool_record_i;
+export type proxmox_pool_list_t = proxmox_pool_record_t[];
+export type proxmox_pool_resource_record_t = proxmox_pool_resource_record_i;
+export type proxmox_pool_resource_list_t = proxmox_pool_resource_record_t[];
+export type proxmox_pool_detail_t = proxmox_pool_detail_record_i;
+export type proxmox_pool_list_response_t = proxmox_api_response_t<proxmox_pool_list_t>;
+export type proxmox_pool_resource_list_response_t = proxmox_api_response_t<proxmox_pool_resource_list_t>;
+export type proxmox_pool_detail_response_t = proxmox_api_response_t<proxmox_pool_detail_t>;
 export type proxmox_storage_content_record_t = proxmox_storage_content_record_i;
 export type proxmox_storage_content_list_t = proxmox_storage_content_record_t[];
 export type proxmox_storage_template_catalog_record_t = proxmox_storage_template_catalog_record_i;

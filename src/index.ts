@@ -21,6 +21,7 @@ export { VmService } from "./services/vm_service";
 export { LxcService } from "./services/lxc_service";
 export { AccessService } from "./services/access_service";
 export { StorageService } from "./services/storage_service";
+export { PoolService } from "./services/pool_service";
 export * from "./types/proxmox_config_types";
 export * from "./types/proxmox_http_types";
 export * from "./types/proxmox_service_types";

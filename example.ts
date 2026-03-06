@@ -11,8 +11,11 @@ import {
   ResolveProfile
 } from './src/index';
 import type {
+  proxmox_datacenter_storage_record_i,
   proxmox_lxc_record_i,
   proxmox_node_record_i,
+  proxmox_pool_record_i,
+  proxmox_pool_resource_record_i,
   proxmox_storage_content_record_i,
   proxmox_storage_template_catalog_record_i,
   proxmox_vm_record_i
@@ -82,6 +85,50 @@ function NormalizeBoolean(value: string | undefined): boolean {
     return false;
   }
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function ResolveRequestedCores(raw_requested_cores: string | undefined): number {
+  const default_requested_cores = 2;
+  if (
+    raw_requested_cores === undefined ||
+    raw_requested_cores.trim().length === 0
+  ) {
+    return default_requested_cores;
+  }
+
+  const parsed_requested_cores = Number.parseInt(raw_requested_cores.trim(), 10);
+  if (!Number.isInteger(parsed_requested_cores) || parsed_requested_cores <= 0) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_REQUESTED_CORES must be a positive integer.'
+    );
+  }
+  return parsed_requested_cores;
+}
+
+function ResolveRequestedMemoryBytes(
+  raw_requested_memory_bytes: string | undefined
+): number {
+  const default_requested_memory_bytes = 2147483648;
+  if (
+    raw_requested_memory_bytes === undefined ||
+    raw_requested_memory_bytes.trim().length === 0
+  ) {
+    return default_requested_memory_bytes;
+  }
+
+  const parsed_requested_memory_bytes = Number.parseInt(
+    raw_requested_memory_bytes.trim(),
+    10
+  );
+  if (
+    !Number.isInteger(parsed_requested_memory_bytes) ||
+    parsed_requested_memory_bytes <= 0
+  ) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_REQUESTED_MEMORY_BYTES must be a positive integer.'
+    );
+  }
+  return parsed_requested_memory_bytes;
 }
 
 function ResolveVmId(raw_vm_id: string | undefined): number {
@@ -219,6 +266,127 @@ function ResolveResourceNode(record: { node?: string }): string {
   return 'unknown';
 }
 
+function ResolvePoolId(record: proxmox_pool_record_i): string {
+  if (typeof record.pool_id === 'string' && record.pool_id.trim().length > 0) {
+    return record.pool_id.trim();
+  }
+  return 'unknown';
+}
+
+function ResolvePoolComment(record: proxmox_pool_record_i): string {
+  if (typeof record.comment === 'string' && record.comment.trim().length > 0) {
+    return record.comment.trim();
+  }
+  return 'none';
+}
+
+function ResolvePoolResourceId(record: proxmox_pool_resource_record_i): string {
+  if (typeof record.id === 'string' && record.id.trim().length > 0) {
+    return record.id.trim();
+  }
+  if (typeof record.vmid === 'string' && record.vmid.trim().length > 0) {
+    return record.vmid.trim();
+  }
+  if (typeof record.vmid === 'number' && Number.isFinite(record.vmid)) {
+    return String(record.vmid);
+  }
+  return 'unknown';
+}
+
+function ResolvePoolResourceType(record: proxmox_pool_resource_record_i): string {
+  if (typeof record.type === 'string' && record.type.trim().length > 0) {
+    return record.type.trim();
+  }
+  return 'unknown';
+}
+
+function NormalizeStorageContentList(
+  content: proxmox_datacenter_storage_record_i['content']
+): string[] {
+  if (Array.isArray(content)) {
+    return content
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry) => entry.length > 0);
+  }
+  if (typeof content === 'string') {
+    return content
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+  return [];
+}
+
+function ResolveStorageLabel(storage: proxmox_datacenter_storage_record_i): string {
+  if (typeof storage.storage === 'string' && storage.storage.trim().length > 0) {
+    return storage.storage.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveStorageType(storage: proxmox_datacenter_storage_record_i): string {
+  if (typeof storage.type === 'string' && storage.type.trim().length > 0) {
+    return storage.type.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveStorageEnabled(storage: proxmox_datacenter_storage_record_i): string {
+  if (typeof storage.enabled === 'boolean') {
+    return storage.enabled ? 'true' : 'false';
+  }
+  if (typeof storage.enabled === 'number') {
+    return storage.enabled > 0 ? 'true' : 'false';
+  }
+  return 'unknown';
+}
+
+function ResolveStorageShared(storage: proxmox_datacenter_storage_record_i): string {
+  if (typeof storage.shared === 'number') {
+    return storage.shared > 0 ? 'true' : 'false';
+  }
+  return 'unknown';
+}
+
+function ResolveStorageContentLabel(
+  storage: proxmox_datacenter_storage_record_i
+): string {
+  const normalized_content = NormalizeStorageContentList(storage.content);
+  if (normalized_content.length === 0) {
+    return 'unknown';
+  }
+  return normalized_content.join(',');
+}
+
+function IsLxcDiskEligibleStorage(
+  storage: proxmox_datacenter_storage_record_i
+): boolean {
+  const normalized_content = NormalizeStorageContentList(storage.content);
+  return normalized_content.includes('rootdir');
+}
+
+function IsVmDiskEligibleStorage(
+  storage: proxmox_datacenter_storage_record_i
+): boolean {
+  const normalized_content = NormalizeStorageContentList(storage.content);
+  return normalized_content.includes('images');
+}
+
+function LogStorageOptionRecord(params: {
+  label: 'all' | 'lxc_disk' | 'vm_disk';
+  record: proxmox_datacenter_storage_record_i;
+}): void {
+  console.info(
+    `[example] storage_${params.label} storage=${ResolveStorageLabel(
+      params.record
+    )} type=${ResolveStorageType(params.record)} enabled=${ResolveStorageEnabled(
+      params.record
+    )} shared=${ResolveStorageShared(params.record)} content=${ResolveStorageContentLabel(
+      params.record
+    )}`
+  );
+}
+
 function ResolveStorageId(raw_storage_id: string | undefined): string {
   if (raw_storage_id === undefined || raw_storage_id.trim().length === 0) {
     return 'local';
@@ -239,6 +407,13 @@ function ResolveStorageVmidLabel(vmid: string | number | undefined): string {
   }
   if (typeof vmid === 'string' && vmid.trim().length > 0) {
     return vmid.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveMemoryBytesLabel(value: number | undefined): string {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return String(value);
   }
   return 'unknown';
 }
@@ -448,6 +623,125 @@ async function Main(): Promise<void> {
   });
   console.info(`[example] selected_node=${node_id}`);
 
+  const node_cpu_capacity = await proxmox_client.node_service.getNodeCpuCapacity({
+    node_id
+  });
+  const logical_cpu_count =
+    node_cpu_capacity.data.logical_cpu_count ?? 'unknown';
+  const physical_core_count =
+    node_cpu_capacity.data.physical_core_count ?? 'unknown';
+  const socket_count = node_cpu_capacity.data.sockets ?? 'unknown';
+  const cpu_model = node_cpu_capacity.data.model ?? 'unknown';
+  console.info(
+    `[example] node_cpu_capacity node=${node_id} logical=${logical_cpu_count} physical=${physical_core_count} sockets=${socket_count} model=${cpu_model}`
+  );
+  console.info(
+    `[example] node_cpu_capacity_sources logical=${node_cpu_capacity.data.source_fields.logical_cpu_count ?? 'unknown'} physical=${node_cpu_capacity.data.source_fields.physical_core_count ?? 'unknown'}`
+  );
+
+  const requested_cores_for_preflight = ResolveRequestedCores(
+    process.env.PROXMOX_EXAMPLE_REQUESTED_CORES
+  );
+  const core_preflight = await proxmox_client.node_service.canAllocateCores({
+    node_id,
+    requested_cores: requested_cores_for_preflight,
+    mode: 'logical'
+  });
+  console.info(
+    `[example] core_preflight mode=${core_preflight.data.mode} requested=${core_preflight.data.requested_cores} available=${core_preflight.data.available_cores ?? 'unknown'} allowed=${core_preflight.data.allowed} reason=${core_preflight.data.reason}`
+  );
+
+  const node_memory_capacity =
+    await proxmox_client.node_service.getNodeMemoryCapacity({
+      node_id
+    });
+  console.info(
+    `[example] node_memory_capacity node=${node_id} total=${ResolveMemoryBytesLabel(node_memory_capacity.data.total_memory_bytes)} used=${ResolveMemoryBytesLabel(node_memory_capacity.data.used_memory_bytes)} free=${ResolveMemoryBytesLabel(node_memory_capacity.data.free_memory_bytes)}`
+  );
+  console.info(
+    `[example] node_memory_capacity_sources total=${node_memory_capacity.data.source_fields.total_memory_bytes ?? 'unknown'} used=${node_memory_capacity.data.source_fields.used_memory_bytes ?? 'unknown'} free=${node_memory_capacity.data.source_fields.free_memory_bytes ?? 'unknown'}`
+  );
+
+  const node_memory_allocations =
+    await proxmox_client.node_service.getNodeMemoryAllocations({
+      node_id
+    });
+  const vm_memory_allocations = node_memory_allocations.data.resources.filter(
+    (resource_record) => resource_record.resource_type === 'qemu'
+  );
+  const lxc_memory_allocations = node_memory_allocations.data.resources.filter(
+    (resource_record) => resource_record.resource_type === 'lxc'
+  );
+  console.info(
+    `[example] node_memory_allocations include_stopped=${node_memory_allocations.data.include_stopped} resources=${node_memory_allocations.data.resource_count} vm_resources=${vm_memory_allocations.length} lxc_resources=${lxc_memory_allocations.length} allocated_total=${node_memory_allocations.data.allocated_memory_bytes_total} used_total=${node_memory_allocations.data.used_memory_bytes_total}`
+  );
+  for (const resource_record of node_memory_allocations.data.resources) {
+    console.info(
+      `[example] node_memory_allocation resource_type=${resource_record.resource_type} resource_id=${resource_record.resource_id} name=${resource_record.name ?? 'unknown'} status=${resource_record.status ?? 'unknown'} used=${ResolveMemoryBytesLabel(resource_record.memory_used_bytes)} limit=${ResolveMemoryBytesLabel(resource_record.memory_limit_bytes)}`
+    );
+  }
+
+  const requested_memory_bytes_for_preflight = ResolveRequestedMemoryBytes(
+    process.env.PROXMOX_EXAMPLE_REQUESTED_MEMORY_BYTES
+  );
+  const memory_preflight_free_headroom =
+    await proxmox_client.node_service.canAllocateMemory({
+      node_id,
+      requested_memory_bytes: requested_memory_bytes_for_preflight,
+      mode: 'free_headroom'
+    });
+  console.info(
+    `[example] memory_preflight mode=${memory_preflight_free_headroom.data.mode} requested=${memory_preflight_free_headroom.data.requested_memory_bytes} available=${ResolveMemoryBytesLabel(memory_preflight_free_headroom.data.available_memory_bytes)} allowed=${memory_preflight_free_headroom.data.allowed} reason=${memory_preflight_free_headroom.data.reason}`
+  );
+
+  const memory_preflight_allocated_headroom =
+    await proxmox_client.node_service.canAllocateMemory({
+      node_id,
+      requested_memory_bytes: requested_memory_bytes_for_preflight,
+      mode: 'allocated_headroom'
+    });
+  console.info(
+    `[example] memory_preflight mode=${memory_preflight_allocated_headroom.data.mode} requested=${memory_preflight_allocated_headroom.data.requested_memory_bytes} available=${ResolveMemoryBytesLabel(memory_preflight_allocated_headroom.data.available_memory_bytes)} allowed=${memory_preflight_allocated_headroom.data.allowed} reason=${memory_preflight_allocated_headroom.data.reason}`
+  );
+
+  const pool_inventory = await proxmox_client.pool_service.listPools();
+  const pool_records = pool_inventory.data as proxmox_pool_record_i[];
+  console.info(`[example] pool_count=${pool_records.length}`);
+  for (const pool_record of pool_records) {
+    console.info(
+      `[example] pool id=${ResolvePoolId(pool_record)} comment=${ResolvePoolComment(pool_record)}`
+    );
+  }
+
+  const selected_pool_id_from_env =
+    process.env.PROXMOX_EXAMPLE_POOL_ID?.trim() || undefined;
+  const selected_pool_id =
+    selected_pool_id_from_env ||
+    (pool_records.length > 0 ? ResolvePoolId(pool_records[0]) : undefined);
+  if (selected_pool_id !== undefined && selected_pool_id !== 'unknown') {
+    const selected_pool = await proxmox_client.pool_service.getPool({
+      pool_id: selected_pool_id
+    });
+    console.info(
+      `[example] selected_pool id=${selected_pool.data.pool_id} members=${selected_pool.data.members.length}`
+    );
+
+    const selected_pool_resources =
+      await proxmox_client.pool_service.listPoolResources({
+        pool_id: selected_pool_id
+      });
+    console.info(
+      `[example] selected_pool_resources_count=${selected_pool_resources.data.length}`
+    );
+    for (const resource_record of selected_pool_resources.data) {
+      console.info(
+        `[example] selected_pool_resource id=${ResolvePoolResourceId(resource_record)} type=${ResolvePoolResourceType(resource_record)}`
+      );
+    }
+  } else {
+    console.info('[example] selected_pool_skipped reason=no_pools_found');
+  }
+
   const vm_inventory = await proxmox_client.vm_service.listVms({
     node_id
   });
@@ -468,6 +762,55 @@ async function Main(): Promise<void> {
     console.info(
       `[example] lxc id=${ResolveResourceId(lxc_record)} name=${ResolveResourceName(lxc_record)} status=${ResolveResourceStatus(lxc_record)} node=${ResolveResourceNode(lxc_record)}`
     );
+  }
+
+  const storage_options_response = await (async () => {
+    try {
+      return await proxmox_client.datacenter_service.listStorage({
+        node: node_id
+      });
+    } catch (error) {
+      if (error instanceof ProxmoxHttpError) {
+        console.info(
+          '[example] storage_scope_fallback reason=node_query_not_supported_using_unfiltered_listStorage'
+        );
+        return proxmox_client.datacenter_service.listStorage();
+      }
+      throw error;
+    }
+  })();
+  const storage_options =
+    storage_options_response.data as proxmox_datacenter_storage_record_i[];
+  console.info(`[example] storage_all_count=${storage_options.length}`);
+  for (const storage_record of storage_options) {
+    LogStorageOptionRecord({
+      label: 'all',
+      record: storage_record
+    });
+  }
+
+  const lxc_disk_storage_options = storage_options.filter((storage_record) =>
+    IsLxcDiskEligibleStorage(storage_record)
+  );
+  console.info(
+    `[example] storage_lxc_disk_count=${lxc_disk_storage_options.length}`
+  );
+  for (const storage_record of lxc_disk_storage_options) {
+    LogStorageOptionRecord({
+      label: 'lxc_disk',
+      record: storage_record
+    });
+  }
+
+  const vm_disk_storage_options = storage_options.filter((storage_record) =>
+    IsVmDiskEligibleStorage(storage_record)
+  );
+  console.info(`[example] storage_vm_disk_count=${vm_disk_storage_options.length}`);
+  for (const storage_record of vm_disk_storage_options) {
+    LogStorageOptionRecord({
+      label: 'vm_disk',
+      record: storage_record
+    });
   }
 
   const storage_id = ResolveStorageId(process.env.PROXMOX_EXAMPLE_STORAGE_ID);

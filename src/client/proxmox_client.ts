@@ -27,6 +27,7 @@ import { VmService } from "../services/vm_service";
 import { LxcService } from "../services/lxc_service";
 import { AccessService } from "../services/access_service";
 import { StorageService } from "../services/storage_service";
+import { PoolService } from "../services/pool_service";
 import { ProxmoxError } from "../errors/proxmox_error";
 
 export interface proxmox_client_input_i {
@@ -63,6 +64,7 @@ export class ProxmoxClient {
   public readonly lxc_service: LxcService;
   public readonly access_service: AccessService;
   public readonly storage_service: StorageService;
+  public readonly pool_service: PoolService;
 
   constructor(params: proxmox_client_input_i) {
     this.config = params.config;
@@ -89,6 +91,9 @@ export class ProxmoxClient {
       request_client: this.request_client,
     });
     this.cluster_service = new ClusterService({
+      request_client: this.request_client,
+    });
+    this.pool_service = new PoolService({
       request_client: this.request_client,
     });
     this.node_service = new NodeService({

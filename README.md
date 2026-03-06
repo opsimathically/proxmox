@@ -8,6 +8,7 @@ This SDK provides typed clients for common Proxmox domains:
 
 - datacenter
 - cluster
+- pool
 - node
 - virtual machines (QEMU)
 - containers (LXC)
@@ -33,10 +34,21 @@ Design goals:
 - `getMembership`
 - `listNodes`
 
+### `pool_service` (`PoolService`)
+
+- `listPools`
+- `getPool`
+- `listPoolResources`
+
 ### `node_service` (`NodeService`)
 
 - `listNodes`
 - `getNodeStatus`
+- `getNodeCpuCapacity`
+- `canAllocateCores`
+- `getNodeMemoryCapacity`
+- `getNodeMemoryAllocations`
+- `canAllocateMemory`
 - `getServices`
 - `getNodeMetrics`
 - `rebootNode` (with optional task polling)
@@ -353,6 +365,77 @@ for (const node of nodes.data) {
 }
 ```
 
+### Node CPU capacity and core preflight
+
+```ts
+const cpu_capacity = await client.node_service.getNodeCpuCapacity({
+  node_id: 'g75'
+});
+
+const core_preflight = await client.node_service.canAllocateCores({
+  node_id: 'g75',
+  requested_cores: 4,
+  mode: 'logical'
+});
+
+console.log(cpu_capacity.data.logical_cpu_count);
+console.log(cpu_capacity.data.physical_core_count);
+console.log(core_preflight.data.allowed, core_preflight.data.reason);
+```
+
+Note:
+
+- Proxmox can allow oversubscription depending on workload and policy.
+- `canAllocateCores` is a caller-side preflight helper; it does not enforce server-side limits automatically.
+
+### Node memory capacity, allocations, and memory preflight
+
+```ts
+const memory_capacity = await client.node_service.getNodeMemoryCapacity({
+  node_id: 'g75'
+});
+
+const memory_allocations = await client.node_service.getNodeMemoryAllocations({
+  node_id: 'g75',
+  include_stopped: false
+});
+
+const memory_preflight = await client.node_service.canAllocateMemory({
+  node_id: 'g75',
+  requested_memory_bytes: 2 * 1024 * 1024 * 1024,
+  mode: 'free_headroom'
+});
+
+console.log(memory_capacity.data.total_memory_bytes);
+console.log(memory_capacity.data.used_memory_bytes);
+console.log(memory_capacity.data.free_memory_bytes);
+console.log(memory_allocations.data.allocated_memory_bytes_total);
+console.log(memory_preflight.data.allowed, memory_preflight.data.reason);
+```
+
+Note:
+
+- `mode: "free_headroom"` compares requested bytes against node free memory telemetry.
+- `mode: "allocated_headroom"` compares requested bytes against `(node_total - summed_resource_limits)`.
+- If telemetry is incomplete, `canAllocateMemory` returns `reason: "capacity_unknown"` so callers can apply their own policy.
+
+### List/read resource pools
+
+```ts
+const pools = await client.pool_service.listPools();
+
+for (const pool of pools.data) {
+  console.log(pool.pool_id, pool.comment);
+}
+
+if (pools.data.length > 0) {
+  const pool_id = pools.data[0].pool_id;
+  const pool_detail = await client.pool_service.getPool({ pool_id });
+  const pool_resources = await client.pool_service.listPoolResources({ pool_id });
+  console.log(pool_detail.data.pool_id, pool_resources.data.length);
+}
+```
+
 ### List/read VMs
 
 ```ts
@@ -492,6 +575,9 @@ if (execute_mutations) {
 `example.ts` storage toggle env vars:
 
 - `PROXMOX_EXAMPLE_STORAGE_ID` (default: `local`)
+- `PROXMOX_EXAMPLE_POOL_ID` (optional pool ID for `getPool`/`listPoolResources` example)
+- `PROXMOX_EXAMPLE_REQUESTED_CORES` (optional positive integer for `canAllocateCores` preflight example)
+- `PROXMOX_EXAMPLE_REQUESTED_MEMORY_BYTES` (optional positive integer for `canAllocateMemory` preflight examples)
 - `PROXMOX_EXAMPLE_STORAGE_BACKUP_VMID` (optional `listBackups` filter)
 - `PROXMOX_EXAMPLE_TEMPLATE_CATALOG_SECTION` (optional `listTemplateCatalog` section filter)
 - `PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILE_PATH` (enables upload example when mutations enabled)
@@ -619,7 +705,7 @@ Test coverage structure (high level):
 
 - `test/config/*`: config validation, diagnostics, secret resolution
 - `test/core/*`: transport, retry, auth factory, request construction
-- `test/services/*`: VM/LXC/access service contracts and request behavior
+- `test/services/*`: VM/LXC/access/storage/pool service contracts and request behavior
 - `test/errors/*`: HTTP-to-typed-error mapping
 
 ## Security best practices
@@ -638,6 +724,6 @@ Exports include:
 
 - config helpers: `LoadConfig`, `ValidateConfig`, `ResolveProfile`, `ResolveSecrets`, `BuildConfigDiagnostics`, `EmitStartupDiagnostics`, `ResolveConfigPath`
 - client: `ProxmoxClient`
-- services: `DatacenterService`, `ClusterService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
+- services: `DatacenterService`, `ClusterService`, `PoolService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
 - shared config/http/service types
 - typed error classes and HTTP error mapper

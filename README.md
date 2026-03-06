@@ -82,6 +82,7 @@ Design goals:
 - `listBackups`
 - `listIsoImages`
 - `listCtTemplates`
+- `listTemplateCatalog`
 - `deleteContent`
 - `uploadContent`
 - `downloadContent`
@@ -386,6 +387,9 @@ if (container_list.data.length > 0) {
 
 ### Storage content operations (backups/ISO/templates)
 
+`listCtTemplates` returns template files already present on the selected storage.
+`listTemplateCatalog` returns the available CT template catalog metadata from Proxmox appliance sources.
+
 ```ts
 const backups = await client.storage_service.listBackups({
   node_id: 'g75',
@@ -401,6 +405,21 @@ const ct_templates = await client.storage_service.listCtTemplates({
   node_id: 'g75',
   storage: 'local'
 });
+
+const template_catalog = await client.storage_service.listTemplateCatalog({
+  node_id: 'g75',
+  section: 'system'
+});
+
+for (const item of template_catalog.data) {
+  console.log(
+    item.package,
+    item.version,
+    item.type,
+    item.section,
+    item.description
+  );
+}
 ```
 
 ```ts
@@ -443,6 +462,7 @@ const can_modify_storage_perms =
 Storage endpoint caveat (v1):
 
 - `downloadContent` uses `GET /nodes/<node>/storage/<storage>/download?volume=<volid>`.
+- `listTemplateCatalog` uses `GET /nodes/<node>/aplinfo` (optional `section` query).
 - Proxmox behavior can vary by version/plugin; validate compatibility in your environment.
 
 ### Safe mutation flow behind explicit guard
@@ -468,6 +488,18 @@ if (execute_mutations) {
   });
 }
 ```
+
+`example.ts` storage toggle env vars:
+
+- `PROXMOX_EXAMPLE_STORAGE_ID` (default: `local`)
+- `PROXMOX_EXAMPLE_STORAGE_BACKUP_VMID` (optional `listBackups` filter)
+- `PROXMOX_EXAMPLE_TEMPLATE_CATALOG_SECTION` (optional `listTemplateCatalog` section filter)
+- `PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILE_PATH` (enables upload example when mutations enabled)
+- `PROXMOX_EXAMPLE_STORAGE_UPLOAD_CONTENT_TYPE` (`iso` or `vztmpl`, optional)
+- `PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILENAME` (optional)
+- `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH` (both required to enable download example)
+- `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_OVERWRITE` (optional boolean)
+- `PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE=true` (both required to enable delete example)
 
 ### Permission introspection (current identity)
 

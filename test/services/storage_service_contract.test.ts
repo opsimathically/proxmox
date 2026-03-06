@@ -185,6 +185,74 @@ test("StorageService listBackups/listIsoImages/listCtTemplates build expected re
   assert.equal((template_request.query as Record<string, string>).content, "vztmpl");
 });
 
+test("StorageService listTemplateCatalog builds expected path/query and normalizes response.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data = [
+    {
+      package: "ubuntu-24.04-standard",
+      version: "24.04-2",
+      section: "system",
+      type: "tar.zst",
+      arch: "amd64",
+      description: "Ubuntu container template",
+      checksum: "abc123",
+      url: "http://download.example/templates/ubuntu.tar.zst",
+      size: "1024",
+      unexpected_field: "preserved-in-raw",
+    },
+    "not-an-object",
+    null,
+    {
+      pkgname: "fedora-43-default",
+      desc: "Fedora default template",
+      source: "pveam",
+    },
+  ];
+  const service = new StorageService({
+    request_client,
+  });
+
+  const response = await service.listTemplateCatalog({
+    node_id: "node-a",
+  });
+
+  assert.equal(request_client.requests.length, 1);
+  const request = request_client.requests[0];
+  assert.equal(request.path, "/api2/json/nodes/node-a/aplinfo");
+  assert.equal(request.query, undefined);
+  assert.equal(response.data.length, 2);
+  assert.equal(response.data[0].package, "ubuntu-24.04-standard");
+  assert.equal(response.data[0].version, "24.04-2");
+  assert.equal(response.data[0].section, "system");
+  assert.equal(response.data[0].type, "tar.zst");
+  assert.equal(response.data[0].arch, "amd64");
+  assert.equal(response.data[0].description, "Ubuntu container template");
+  assert.equal(response.data[0].size, 1024);
+  assert.equal(
+    (response.data[0].raw as Record<string, unknown>).unexpected_field,
+    "preserved-in-raw",
+  );
+  assert.equal(response.data[1].package, "fedora-43-default");
+  assert.equal(response.data[1].description, "Fedora default template");
+});
+
+test("StorageService listTemplateCatalog supports section filter query.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data = [];
+  const service = new StorageService({
+    request_client,
+  });
+
+  await service.listTemplateCatalog({
+    node_id: "node-a",
+    section: "system",
+  });
+
+  const request = request_client.requests.at(-1) as proxmox_request_i;
+  assert.equal(request.path, "/api2/json/nodes/node-a/aplinfo");
+  assert.equal((request.query as Record<string, string>).section, "system");
+});
+
 test("StorageService deleteContent returns typed task response and request construction.", async () => {
   const request_client = new FakeRequestClient();
   request_client.response_data = "UPID:node-a:200:abcd";
@@ -258,6 +326,25 @@ test("StorageService validates required input fields.", async () => {
       node_id: "node-a",
       storage: " ",
       volume_id: "local:iso/debian.iso",
+    }),
+    {
+      name: "ProxmoxValidationError",
+    },
+  );
+
+  await assert.rejects(
+    async () => service.listTemplateCatalog({
+      node_id: " ",
+    }),
+    {
+      name: "ProxmoxValidationError",
+    },
+  );
+
+  await assert.rejects(
+    async () => service.listTemplateCatalog({
+      node_id: "node-a",
+      section: " ",
     }),
     {
       name: "ProxmoxValidationError",

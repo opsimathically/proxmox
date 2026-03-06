@@ -16,6 +16,9 @@ import {
   proxmox_request_client_i,
 } from "../core/request/proxmox_request_client";
 import {
+  proxmox_storage_template_catalog_query_i,
+  proxmox_storage_template_catalog_response_t,
+  proxmox_storage_template_catalog_record_t,
   proxmox_storage_content_list_query_i,
   proxmox_storage_content_list_response_t,
   proxmox_storage_content_record_t,
@@ -125,6 +128,28 @@ export class StorageService {
       storage: params.storage,
       content: "vztmpl",
     });
+  }
+
+  public async listTemplateCatalog(
+    params: proxmox_storage_template_catalog_query_i,
+  ): Promise<proxmox_storage_template_catalog_response_t> {
+    const node_id = ValidateNodeId(params.node_id);
+    const query = BuildTemplateCatalogQuery({
+      section: params.section,
+    });
+    const response = await this.request_client.request<unknown[]>({
+      method: "GET" as proxmox_http_method_t,
+      path: `/api2/json/nodes/${encodeURIComponent(node_id)}/aplinfo`,
+      node_id,
+      query,
+      retry_allowed: true,
+    });
+
+    const normalized_data = NormalizeTemplateCatalogRecords(response.data);
+    return {
+      ...response,
+      data: normalized_data,
+    };
   }
 
   public async deleteContent(
@@ -579,16 +604,7 @@ function ValidateStorageReference(params: {
   storage: string;
   volume_id?: string;
 }): { node_id: string; storage: string; volume_id?: string } {
-  const node_id = params.node_id.trim();
-  if (!node_id) {
-    throw new ProxmoxValidationError({
-      code: "proxmox.validation.invalid_input",
-      message: "node_id is required and cannot be empty.",
-      details: {
-        field: "node_id",
-      },
-    });
-  }
+  const node_id = ValidateNodeId(params.node_id);
 
   const storage = params.storage.trim();
   if (!storage) {
@@ -626,6 +642,20 @@ function ValidateStorageReference(params: {
   };
 }
 
+function ValidateNodeId(node_id_raw: string): string {
+  const node_id = node_id_raw.trim();
+  if (!node_id) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "node_id is required and cannot be empty.",
+      details: {
+        field: "node_id",
+      },
+    });
+  }
+  return node_id;
+}
+
 function BuildStorageContentListQuery(params: proxmox_storage_content_list_query_i): { [key: string]: string } {
   const query: { [key: string]: string } = {};
   if (params.content !== undefined) {
@@ -645,6 +675,27 @@ function BuildStorageContentListQuery(params: proxmox_storage_content_list_query
     query.vmid = vmid;
   }
   return query;
+}
+
+function BuildTemplateCatalogQuery(params: {
+  section?: string;
+}): { [key: string]: string } | undefined {
+  if (params.section === undefined) {
+    return undefined;
+  }
+  const section = params.section.trim();
+  if (!section) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "section must not be empty when provided.",
+      details: {
+        field: "section",
+      },
+    });
+  }
+  return {
+    section,
+  };
 }
 
 function BuildDeleteContentQuery(delay: number | undefined): { [key: string]: string } | undefined {
@@ -703,6 +754,45 @@ function NormalizeStorageContentRecords(params: {
   return output;
 }
 
+function NormalizeTemplateCatalogRecords(raw_records: unknown): proxmox_storage_template_catalog_record_t[] {
+  if (!Array.isArray(raw_records)) {
+    return [];
+  }
+
+  const output: proxmox_storage_template_catalog_record_t[] = [];
+  for (const raw_record of raw_records) {
+    if (typeof raw_record !== "object" || raw_record === null || Array.isArray(raw_record)) {
+      continue;
+    }
+    const record = raw_record as Record<string, unknown>;
+    output.push({
+      template_id: ResolveTemplateCatalogIdentifier(record),
+      package: ToOptionalString(record.package) ?? ToOptionalString(record.pkgname),
+      name: ToOptionalString(record.name),
+      version: ToOptionalString(record.version),
+      release: ToOptionalString(record.release),
+      section: ToOptionalString(record.section),
+      type: ToOptionalString(record.type),
+      os: ToOptionalString(record.os),
+      channel: ToOptionalString(record.channel),
+      architecture: ToOptionalString(record.architecture),
+      arch: ToOptionalString(record.arch),
+      description: ToOptionalString(record.description) ?? ToOptionalString(record.desc),
+      infopage: ToOptionalString(record.infopage),
+      file: ToOptionalString(record.file),
+      filename: ToOptionalString(record.filename),
+      checksum: ToOptionalString(record.checksum),
+      sha512sum: ToOptionalString(record.sha512sum),
+      md5sum: ToOptionalString(record.md5sum),
+      url: ToOptionalString(record.url),
+      size: ToOptionalNumber(record.size),
+      source: ToOptionalString(record.source),
+      raw: record,
+    });
+  }
+  return output;
+}
+
 function ResolveVolumeId(record: Record<string, unknown>): string {
   const candidates = [record.volid, record.volume, record.id];
   for (const candidate of candidates) {
@@ -711,6 +801,24 @@ function ResolveVolumeId(record: Record<string, unknown>): string {
     }
   }
   return "unknown";
+}
+
+function ResolveTemplateCatalogIdentifier(record: Record<string, unknown>): string | undefined {
+  const candidates = [
+    record.template,
+    record.appliance,
+    record.volid,
+    record.id,
+    record.package,
+    record.pkgname,
+    record.name,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
 }
 
 function ValidateContentType(content_type: "iso" | "vztmpl"): "iso" | "vztmpl" {

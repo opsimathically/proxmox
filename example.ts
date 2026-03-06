@@ -13,6 +13,8 @@ import {
 import type {
   proxmox_lxc_record_i,
   proxmox_node_record_i,
+  proxmox_storage_content_record_i,
+  proxmox_storage_template_catalog_record_i,
   proxmox_vm_record_i
 } from './src/index';
 
@@ -94,6 +96,22 @@ function ResolveVmId(raw_vm_id: string | undefined): number {
   }
 
   return parsed_vm_id;
+}
+
+function ResolveOptionalPositiveInteger(params: {
+  raw_value: string | undefined;
+  field_name: string;
+}): number | undefined {
+  if (params.raw_value === undefined || params.raw_value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed_value = Number.parseInt(params.raw_value.trim(), 10);
+  if (!Number.isInteger(parsed_value) || parsed_value <= 0) {
+    throw new Error(`${params.field_name} must be a positive integer.`);
+  }
+
+  return parsed_value;
 }
 
 function LogTaskMetadata(params: {
@@ -199,6 +217,114 @@ function ResolveResourceNode(record: { node?: string }): string {
     return record.node.trim();
   }
   return 'unknown';
+}
+
+function ResolveStorageId(raw_storage_id: string | undefined): string {
+  if (raw_storage_id === undefined || raw_storage_id.trim().length === 0) {
+    return 'local';
+  }
+  return raw_storage_id.trim();
+}
+
+function ResolveStorageSizeLabel(size: number | undefined): string {
+  if (typeof size === 'number' && Number.isFinite(size) && size >= 0) {
+    return String(size);
+  }
+  return 'unknown';
+}
+
+function ResolveStorageVmidLabel(vmid: string | number | undefined): string {
+  if (typeof vmid === 'number' && Number.isFinite(vmid)) {
+    return String(vmid);
+  }
+  if (typeof vmid === 'string' && vmid.trim().length > 0) {
+    return vmid.trim();
+  }
+  return 'unknown';
+}
+
+function LogStorageContentInventory(params: {
+  label: 'backups' | 'iso_images' | 'ct_templates';
+  records: proxmox_storage_content_record_i[];
+}): void {
+  console.info(`[example] storage_${params.label}_count=${params.records.length}`);
+  for (const record of params.records) {
+    const vmid_suffix =
+      record.vmid === undefined
+        ? ''
+        : ` vmid=${ResolveStorageVmidLabel(record.vmid)}`;
+    console.info(
+      `[example] storage_${params.label} volume_id=${record.volume_id} content=${record.normalized_content} size=${ResolveStorageSizeLabel(record.size)}${vmid_suffix}`
+    );
+  }
+}
+
+function ResolveStorageUploadContentType(params: {
+  raw_content_type: string | undefined;
+  upload_file_path: string;
+}): 'iso' | 'vztmpl' {
+  const explicit_content_type = params.raw_content_type?.trim().toLowerCase();
+  if (explicit_content_type === 'iso' || explicit_content_type === 'vztmpl') {
+    return explicit_content_type;
+  }
+  if (explicit_content_type !== undefined && explicit_content_type.length > 0) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_STORAGE_UPLOAD_CONTENT_TYPE must be iso or vztmpl.'
+    );
+  }
+
+  const normalized_path = params.upload_file_path.trim().toLowerCase();
+  const template_suffixes = [
+    '.tar.gz',
+    '.tar.xz',
+    '.tar.zst',
+    '.tgz',
+    '.txz'
+  ];
+  if (
+    template_suffixes.some((template_suffix) =>
+      normalized_path.endsWith(template_suffix)
+    )
+  ) {
+    return 'vztmpl';
+  }
+
+  return 'iso';
+}
+
+function ResolveStorageAclPath(storage: string): string {
+  return `/storage/${storage}`;
+}
+
+function ResolveTemplateCatalogLabel(value: string | undefined): string {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveTemplateCatalogDescription(value: string | undefined): string {
+  const normalized_description = ResolveTemplateCatalogLabel(value);
+  if (normalized_description.length <= 120) {
+    return normalized_description;
+  }
+  return `${normalized_description.slice(0, 117)}...`;
+}
+
+function LogTemplateCatalogInventory(params: {
+  records: proxmox_storage_template_catalog_record_i[];
+  section?: string;
+}): void {
+  const section_suffix =
+    params.section === undefined ? '' : ` section=${params.section}`;
+  console.info(
+    `[example] template_catalog_count=${params.records.length}${section_suffix}`
+  );
+  for (const record of params.records) {
+    console.info(
+      `[example] template_catalog template_id=${ResolveTemplateCatalogLabel(record.template_id)} package=${ResolveTemplateCatalogLabel(record.package)} version=${ResolveTemplateCatalogLabel(record.version)} type=${ResolveTemplateCatalogLabel(record.type)} section=${ResolveTemplateCatalogLabel(record.section)} description=${ResolveTemplateCatalogDescription(record.description)}`
+    );
+  }
 }
 
 function ResolvePreflightVmPath(params: {
@@ -344,6 +470,54 @@ async function Main(): Promise<void> {
     );
   }
 
+  const storage_id = ResolveStorageId(process.env.PROXMOX_EXAMPLE_STORAGE_ID);
+  console.info(`[example] selected_storage=${storage_id}`);
+  const backup_vmid_filter = ResolveOptionalPositiveInteger({
+    raw_value: process.env.PROXMOX_EXAMPLE_STORAGE_BACKUP_VMID,
+    field_name: 'PROXMOX_EXAMPLE_STORAGE_BACKUP_VMID'
+  });
+
+  const backup_inventory = await proxmox_client.storage_service.listBackups({
+    node_id,
+    storage: storage_id,
+    vmid: backup_vmid_filter
+  });
+  LogStorageContentInventory({
+    label: 'backups',
+    records: backup_inventory.data
+  });
+
+  const iso_inventory = await proxmox_client.storage_service.listIsoImages({
+    node_id,
+    storage: storage_id
+  });
+  LogStorageContentInventory({
+    label: 'iso_images',
+    records: iso_inventory.data
+  });
+
+  const ct_template_inventory =
+    await proxmox_client.storage_service.listCtTemplates({
+      node_id,
+      storage: storage_id
+    });
+  LogStorageContentInventory({
+    label: 'ct_templates',
+    records: ct_template_inventory.data
+  });
+
+  const template_catalog_section =
+    process.env.PROXMOX_EXAMPLE_TEMPLATE_CATALOG_SECTION?.trim() || undefined;
+  const template_catalog_inventory =
+    await proxmox_client.storage_service.listTemplateCatalog({
+      node_id,
+      section: template_catalog_section
+    });
+  LogTemplateCatalogInventory({
+    records: template_catalog_inventory.data,
+    section: template_catalog_section
+  });
+
   const preflight_vm_path = ResolvePreflightVmPath({
     vm_records,
     raw_vm_id: process.env.PROXMOX_EXAMPLE_VM_ID
@@ -423,6 +597,55 @@ async function Main(): Promise<void> {
     allowed: current_vm_power_check.data.allowed
   });
 
+  const storage_acl_path = ResolveStorageAclPath(storage_id);
+  const current_storage_audit =
+    await proxmox_client.storage_service.canAuditStorage({
+      node_id,
+      storage: storage_id
+    });
+  LogPrivilegeCheck({
+    identity_label: 'current',
+    path: storage_acl_path,
+    privilege: 'Datastore.Audit',
+    allowed: current_storage_audit.data.allowed
+  });
+
+  const current_storage_template_allocate =
+    await proxmox_client.storage_service.canAllocateTemplate({
+      node_id,
+      storage: storage_id
+    });
+  LogPrivilegeCheck({
+    identity_label: 'current',
+    path: storage_acl_path,
+    privilege: 'Datastore.AllocateTemplate',
+    allowed: current_storage_template_allocate.data.allowed
+  });
+
+  const current_storage_space_allocate =
+    await proxmox_client.storage_service.canAllocateSpace({
+      node_id,
+      storage: storage_id
+    });
+  LogPrivilegeCheck({
+    identity_label: 'current',
+    path: storage_acl_path,
+    privilege: 'Datastore.AllocateSpace',
+    allowed: current_storage_space_allocate.data.allowed
+  });
+
+  const current_storage_permission_modify =
+    await proxmox_client.storage_service.canModifyPermissions({
+      node_id,
+      storage: storage_id
+    });
+  LogPrivilegeCheck({
+    identity_label: 'current',
+    path: storage_acl_path,
+    privilege: 'Permissions.Modify',
+    allowed: current_storage_permission_modify.data.allowed
+  });
+
   const permission_target_auth_id =
     process.env.PROXMOX_EXAMPLE_PERMISSION_TARGET_AUTH_ID?.trim() || undefined;
   if (permission_target_auth_id === undefined) {
@@ -485,6 +708,62 @@ async function Main(): Promise<void> {
         privilege: 'VM.PowerMgmt',
         allowed: target_vm_power_check.data.allowed
       });
+
+      const target_storage_audit_check =
+        await proxmox_client.storage_service.canAuditStorage({
+          node_id,
+          storage: storage_id,
+          auth_id: permission_target_auth_id
+        });
+      LogPrivilegeCheck({
+        identity_label: 'target',
+        auth_id: permission_target_auth_id,
+        path: storage_acl_path,
+        privilege: 'Datastore.Audit',
+        allowed: target_storage_audit_check.data.allowed
+      });
+
+      const target_storage_template_allocate_check =
+        await proxmox_client.storage_service.canAllocateTemplate({
+          node_id,
+          storage: storage_id,
+          auth_id: permission_target_auth_id
+        });
+      LogPrivilegeCheck({
+        identity_label: 'target',
+        auth_id: permission_target_auth_id,
+        path: storage_acl_path,
+        privilege: 'Datastore.AllocateTemplate',
+        allowed: target_storage_template_allocate_check.data.allowed
+      });
+
+      const target_storage_space_allocate_check =
+        await proxmox_client.storage_service.canAllocateSpace({
+          node_id,
+          storage: storage_id,
+          auth_id: permission_target_auth_id
+        });
+      LogPrivilegeCheck({
+        identity_label: 'target',
+        auth_id: permission_target_auth_id,
+        path: storage_acl_path,
+        privilege: 'Datastore.AllocateSpace',
+        allowed: target_storage_space_allocate_check.data.allowed
+      });
+
+      const target_storage_permissions_modify_check =
+        await proxmox_client.storage_service.canModifyPermissions({
+          node_id,
+          storage: storage_id,
+          auth_id: permission_target_auth_id
+        });
+      LogPrivilegeCheck({
+        identity_label: 'target',
+        auth_id: permission_target_auth_id,
+        path: storage_acl_path,
+        privilege: 'Permissions.Modify',
+        allowed: target_storage_permissions_modify_check.data.allowed
+      });
     } catch (error) {
       if (error instanceof ProxmoxAuthError) {
         const status_code_suffix =
@@ -507,9 +786,92 @@ async function Main(): Promise<void> {
   );
   if (!execute_mutations) {
     console.info(
+      '[example] storage_upload_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+    console.info(
+      '[example] storage_download_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+    console.info(
+      '[example] storage_delete_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+    console.info(
       '[example] VM create/start flow skipped. Set PROXMOX_EXAMPLE_EXECUTE_MUTATIONS=true to run it.'
     );
     return;
+  }
+
+  const upload_file_path =
+    process.env.PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILE_PATH?.trim() || undefined;
+  if (upload_file_path === undefined) {
+    console.info(
+      '[example] storage_upload_skipped reason=PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILE_PATH_not_set'
+    );
+  } else {
+    const upload_content_type = ResolveStorageUploadContentType({
+      raw_content_type: process.env.PROXMOX_EXAMPLE_STORAGE_UPLOAD_CONTENT_TYPE,
+      upload_file_path: upload_file_path
+    });
+    const upload_filename =
+      process.env.PROXMOX_EXAMPLE_STORAGE_UPLOAD_FILENAME?.trim() || undefined;
+    const upload_result = await proxmox_client.storage_service.uploadContent({
+      node_id,
+      storage: storage_id,
+      content_type: upload_content_type,
+      file_path: upload_file_path,
+      filename: upload_filename
+    });
+    console.info(
+      `[example] storage_upload_submitted storage=${storage_id} content_type=${upload_content_type} task_id=${upload_result.data.task_id}`
+    );
+  }
+
+  const download_volume_id =
+    process.env.PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_VOLUME_ID?.trim() || undefined;
+  const download_destination_path =
+    process.env.PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH?.trim() ||
+    undefined;
+  if (download_volume_id === undefined || download_destination_path === undefined) {
+    console.info(
+      '[example] storage_download_skipped reason=PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_VOLUME_ID_or_PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH_not_set'
+    );
+  } else {
+    const download_overwrite = NormalizeBoolean(
+      process.env.PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_OVERWRITE
+    );
+    const download_result = await proxmox_client.storage_service.downloadContent({
+      node_id,
+      storage: storage_id,
+      volume_id: download_volume_id,
+      destination_path: download_destination_path,
+      overwrite: download_overwrite
+    });
+    console.info(
+      `[example] storage_download_completed storage=${storage_id} volume_id=${download_volume_id} bytes_written=${download_result.data.bytes_written} destination_path=${download_result.data.destination_path}`
+    );
+  }
+
+  const delete_volume_id =
+    process.env.PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID?.trim() || undefined;
+  const allow_storage_delete = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE
+  );
+  if (delete_volume_id === undefined) {
+    console.info(
+      '[example] storage_delete_skipped reason=PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID_not_set'
+    );
+  } else if (!allow_storage_delete) {
+    console.info(
+      '[example] storage_delete_skipped reason=PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE_not_true'
+    );
+  } else {
+    const delete_result = await proxmox_client.storage_service.deleteContent({
+      node_id,
+      storage: storage_id,
+      volume_id: delete_volume_id
+    });
+    console.info(
+      `[example] storage_delete_submitted storage=${storage_id} volume_id=${delete_volume_id} task_id=${delete_result.data.task_id}`
+    );
   }
 
   const vm_id = ResolveVmId(process.env.PROXMOX_EXAMPLE_VM_ID);

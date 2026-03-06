@@ -185,6 +185,11 @@ export interface proxmox_storage_content_list_query_i {
   vmid?: proxmox_vm_id_t;
 }
 
+export interface proxmox_storage_template_catalog_query_i {
+  node_id: string;
+  section?: string;
+}
+
 export interface proxmox_storage_delete_input_i {
   node_id: string;
   storage: string;
@@ -438,6 +443,31 @@ export interface proxmox_storage_content_record_i {
   raw: Record<string, unknown>;
 }
 
+export interface proxmox_storage_template_catalog_record_i {
+  template_id?: string;
+  package?: string;
+  name?: string;
+  version?: string;
+  release?: string;
+  section?: string;
+  type?: string;
+  os?: string;
+  channel?: string;
+  architecture?: string;
+  arch?: string;
+  description?: string;
+  infopage?: string;
+  file?: string;
+  filename?: string;
+  checksum?: string;
+  sha512sum?: string;
+  md5sum?: string;
+  url?: string;
+  size?: number;
+  source?: string;
+  raw: Record<string, unknown>;
+}
+
 export interface proxmox_storage_task_record_i {
   operation: "delete_content" | "upload_content";
   node_id: string;
@@ -483,9 +513,12 @@ export type proxmox_access_permissions_response_t = proxmox_api_response_t<proxm
 export type proxmox_access_privilege_check_response_t = proxmox_api_response_t<proxmox_access_privilege_check_record_i>;
 export type proxmox_storage_content_record_t = proxmox_storage_content_record_i;
 export type proxmox_storage_content_list_t = proxmox_storage_content_record_t[];
+export type proxmox_storage_template_catalog_record_t = proxmox_storage_template_catalog_record_i;
+export type proxmox_storage_template_catalog_list_t = proxmox_storage_template_catalog_record_t[];
 export type proxmox_storage_task_t = proxmox_storage_task_record_i;
 export type proxmox_storage_download_t = proxmox_storage_download_record_i;
 export type proxmox_storage_content_list_response_t = proxmox_api_response_t<proxmox_storage_content_list_t>;
+export type proxmox_storage_template_catalog_response_t = proxmox_api_response_t<proxmox_storage_template_catalog_list_t>;
 export type proxmox_storage_task_response_t = proxmox_api_response_t<proxmox_storage_task_t>;
 export type proxmox_storage_download_response_t = proxmox_api_response_t<proxmox_storage_download_t>;
 

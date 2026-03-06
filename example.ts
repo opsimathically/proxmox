@@ -13,6 +13,7 @@ import {
 import type {
   proxmox_datacenter_storage_record_i,
   proxmox_lxc_record_i,
+  proxmox_node_network_interface_record_i,
   proxmox_node_record_i,
   proxmox_pool_record_i,
   proxmox_pool_resource_record_i,
@@ -87,7 +88,9 @@ function NormalizeBoolean(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
-function ResolveRequestedCores(raw_requested_cores: string | undefined): number {
+function ResolveRequestedCores(
+  raw_requested_cores: string | undefined
+): number {
   const default_requested_cores = 2;
   if (
     raw_requested_cores === undefined ||
@@ -96,8 +99,14 @@ function ResolveRequestedCores(raw_requested_cores: string | undefined): number 
     return default_requested_cores;
   }
 
-  const parsed_requested_cores = Number.parseInt(raw_requested_cores.trim(), 10);
-  if (!Number.isInteger(parsed_requested_cores) || parsed_requested_cores <= 0) {
+  const parsed_requested_cores = Number.parseInt(
+    raw_requested_cores.trim(),
+    10
+  );
+  if (
+    !Number.isInteger(parsed_requested_cores) ||
+    parsed_requested_cores <= 0
+  ) {
     throw new Error(
       'PROXMOX_EXAMPLE_REQUESTED_CORES must be a positive integer.'
     );
@@ -266,6 +275,62 @@ function ResolveResourceNode(record: { node?: string }): string {
   return 'unknown';
 }
 
+function ResolveNetworkInterfaceId(
+  record: proxmox_node_network_interface_record_i
+): string {
+  if (
+    typeof record.interface_id === 'string' &&
+    record.interface_id.trim().length > 0
+  ) {
+    return record.interface_id.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveNetworkInterfaceType(
+  record: proxmox_node_network_interface_record_i
+): string {
+  if (typeof record.type === 'string' && record.type.trim().length > 0) {
+    return record.type.trim();
+  }
+  return 'unknown';
+}
+
+function ResolveNetworkBooleanLabel(value: boolean | undefined): string {
+  if (typeof value !== 'boolean') {
+    return 'unknown';
+  }
+  return value ? 'true' : 'false';
+}
+
+function ResolveBridgePortsLabel(
+  record: proxmox_node_network_interface_record_i
+): string {
+  if (Array.isArray(record.bridge_ports) && record.bridge_ports.length > 0) {
+    return record.bridge_ports.join(',');
+  }
+  return 'none';
+}
+
+function LogNetworkInterfaceRecord(params: {
+  label: 'all' | 'bridge';
+  record: proxmox_node_network_interface_record_i;
+}): void {
+  console.info(
+    `[example] network_${params.label} interface=${ResolveNetworkInterfaceId(
+      params.record
+    )} type=${ResolveNetworkInterfaceType(
+      params.record
+    )} is_bridge=${ResolveNetworkBooleanLabel(
+      params.record.is_bridge
+    )} active=${ResolveNetworkBooleanLabel(
+      params.record.active
+    )} autostart=${ResolveNetworkBooleanLabel(
+      params.record.autostart
+    )} bridge_ports=${ResolveBridgePortsLabel(params.record)}`
+  );
+}
+
 function ResolvePoolId(record: proxmox_pool_record_i): string {
   if (typeof record.pool_id === 'string' && record.pool_id.trim().length > 0) {
     return record.pool_id.trim();
@@ -293,7 +358,9 @@ function ResolvePoolResourceId(record: proxmox_pool_resource_record_i): string {
   return 'unknown';
 }
 
-function ResolvePoolResourceType(record: proxmox_pool_resource_record_i): string {
+function ResolvePoolResourceType(
+  record: proxmox_pool_resource_record_i
+): string {
   if (typeof record.type === 'string' && record.type.trim().length > 0) {
     return record.type.trim();
   }
@@ -317,21 +384,30 @@ function NormalizeStorageContentList(
   return [];
 }
 
-function ResolveStorageLabel(storage: proxmox_datacenter_storage_record_i): string {
-  if (typeof storage.storage === 'string' && storage.storage.trim().length > 0) {
+function ResolveStorageLabel(
+  storage: proxmox_datacenter_storage_record_i
+): string {
+  if (
+    typeof storage.storage === 'string' &&
+    storage.storage.trim().length > 0
+  ) {
     return storage.storage.trim();
   }
   return 'unknown';
 }
 
-function ResolveStorageType(storage: proxmox_datacenter_storage_record_i): string {
+function ResolveStorageType(
+  storage: proxmox_datacenter_storage_record_i
+): string {
   if (typeof storage.type === 'string' && storage.type.trim().length > 0) {
     return storage.type.trim();
   }
   return 'unknown';
 }
 
-function ResolveStorageEnabled(storage: proxmox_datacenter_storage_record_i): string {
+function ResolveStorageEnabled(
+  storage: proxmox_datacenter_storage_record_i
+): string {
   if (typeof storage.enabled === 'boolean') {
     return storage.enabled ? 'true' : 'false';
   }
@@ -341,7 +417,9 @@ function ResolveStorageEnabled(storage: proxmox_datacenter_storage_record_i): st
   return 'unknown';
 }
 
-function ResolveStorageShared(storage: proxmox_datacenter_storage_record_i): string {
+function ResolveStorageShared(
+  storage: proxmox_datacenter_storage_record_i
+): string {
   if (typeof storage.shared === 'number') {
     return storage.shared > 0 ? 'true' : 'false';
   }
@@ -422,7 +500,9 @@ function LogStorageContentInventory(params: {
   label: 'backups' | 'iso_images' | 'ct_templates';
   records: proxmox_storage_content_record_i[];
 }): void {
-  console.info(`[example] storage_${params.label}_count=${params.records.length}`);
+  console.info(
+    `[example] storage_${params.label}_count=${params.records.length}`
+  );
   for (const record of params.records) {
     const vmid_suffix =
       record.vmid === undefined
@@ -449,13 +529,7 @@ function ResolveStorageUploadContentType(params: {
   }
 
   const normalized_path = params.upload_file_path.trim().toLowerCase();
-  const template_suffixes = [
-    '.tar.gz',
-    '.tar.xz',
-    '.tar.zst',
-    '.tgz',
-    '.txz'
-  ];
+  const template_suffixes = ['.tar.gz', '.tar.xz', '.tar.zst', '.tgz', '.txz'];
   if (
     template_suffixes.some((template_suffix) =>
       normalized_path.endsWith(template_suffix)
@@ -500,6 +574,100 @@ function LogTemplateCatalogInventory(params: {
       `[example] template_catalog template_id=${ResolveTemplateCatalogLabel(record.template_id)} package=${ResolveTemplateCatalogLabel(record.package)} version=${ResolveTemplateCatalogLabel(record.version)} type=${ResolveTemplateCatalogLabel(record.type)} section=${ResolveTemplateCatalogLabel(record.section)} description=${ResolveTemplateCatalogDescription(record.description)}`
     );
   }
+}
+
+function ResolveLxcHelperContainerId(
+  raw_container_id: string | undefined
+): number {
+  const default_container_id = 9100;
+  if (raw_container_id === undefined || raw_container_id.trim().length === 0) {
+    return default_container_id;
+  }
+  const parsed_container_id = Number.parseInt(raw_container_id.trim(), 10);
+  if (!Number.isInteger(parsed_container_id) || parsed_container_id <= 0) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID must be a positive integer.'
+    );
+  }
+  return parsed_container_id;
+}
+
+function ResolveLxcHelperHostname(params: {
+  raw_hostname: string | undefined;
+  container_id: number;
+}): string {
+  if (
+    typeof params.raw_hostname === 'string' &&
+    params.raw_hostname.trim().length > 0
+  ) {
+    return params.raw_hostname.trim();
+  }
+  return `sdk-lxc-${params.container_id}.local`;
+}
+
+function ResolveLxcHelperBridge(
+  bridge_interfaces: proxmox_node_network_interface_record_i[]
+): string | undefined {
+  if (bridge_interfaces.length === 0) {
+    return undefined;
+  }
+  const candidate_bridge = ResolveNetworkInterfaceId(bridge_interfaces[0]);
+  return candidate_bridge === 'unknown' ? undefined : candidate_bridge;
+}
+
+function ResolveLxcHelperDiskStorage(params: {
+  lxc_disk_storage_options: proxmox_datacenter_storage_record_i[];
+  fallback_storage: string;
+}): string {
+  if (params.lxc_disk_storage_options.length > 0) {
+    const preferred_storage = ResolveStorageLabel(
+      params.lxc_disk_storage_options[0]
+    );
+    if (preferred_storage !== 'unknown') {
+      return preferred_storage;
+    }
+  }
+  return params.fallback_storage;
+}
+
+function ResolveLxcHelperTemplateReference(params: {
+  local_templates: proxmox_storage_content_record_i[];
+  catalog_templates: proxmox_storage_template_catalog_record_i[];
+  fallback_storage: string;
+}): string | undefined {
+  if (params.local_templates.length > 0) {
+    const volume_id = params.local_templates[0].volume_id?.trim();
+    if (typeof volume_id === 'string' && volume_id.length > 0) {
+      return volume_id;
+    }
+  }
+
+  for (const catalog_record of params.catalog_templates) {
+    const template_candidate_fields = [
+      catalog_record.file,
+      catalog_record.filename,
+      catalog_record.template_id,
+      catalog_record.package
+    ];
+    for (const field_value of template_candidate_fields) {
+      if (typeof field_value !== 'string') {
+        continue;
+      }
+      const normalized_value = field_value.trim();
+      if (!normalized_value) {
+        continue;
+      }
+      if (normalized_value.includes(':')) {
+        return normalized_value;
+      }
+      if (normalized_value.startsWith('vztmpl/')) {
+        return `${params.fallback_storage}:${normalized_value}`;
+      }
+      return `${params.fallback_storage}:vztmpl/${normalized_value}`;
+    }
+  }
+
+  return undefined;
 }
 
 function ResolvePreflightVmPath(params: {
@@ -623,9 +791,40 @@ async function Main(): Promise<void> {
   });
   console.info(`[example] selected_node=${node_id}`);
 
-  const node_cpu_capacity = await proxmox_client.node_service.getNodeCpuCapacity({
-    node_id
-  });
+  const network_interfaces_response =
+    await proxmox_client.node_service.listNetworkInterfaces({
+      node_id
+    });
+  const network_interfaces =
+    network_interfaces_response.data as proxmox_node_network_interface_record_i[];
+  console.info(
+    `[example] network_interface_count=${network_interfaces.length}`
+  );
+  for (const interface_record of network_interfaces) {
+    LogNetworkInterfaceRecord({
+      label: 'all',
+      record: interface_record
+    });
+  }
+
+  const bridge_interfaces_response =
+    await proxmox_client.node_service.listBridges({
+      node_id
+    });
+  const bridge_interfaces =
+    bridge_interfaces_response.data as proxmox_node_network_interface_record_i[];
+  console.info(`[example] network_bridge_count=${bridge_interfaces.length}`);
+  for (const bridge_record of bridge_interfaces) {
+    LogNetworkInterfaceRecord({
+      label: 'bridge',
+      record: bridge_record
+    });
+  }
+
+  const node_cpu_capacity =
+    await proxmox_client.node_service.getNodeCpuCapacity({
+      node_id
+    });
   const logical_cpu_count =
     node_cpu_capacity.data.logical_cpu_count ?? 'unknown';
   const physical_core_count =
@@ -805,7 +1004,9 @@ async function Main(): Promise<void> {
   const vm_disk_storage_options = storage_options.filter((storage_record) =>
     IsVmDiskEligibleStorage(storage_record)
   );
-  console.info(`[example] storage_vm_disk_count=${vm_disk_storage_options.length}`);
+  console.info(
+    `[example] storage_vm_disk_count=${vm_disk_storage_options.length}`
+  );
   for (const storage_record of vm_disk_storage_options) {
     LogStorageOptionRecord({
       label: 'vm_disk',
@@ -860,6 +1061,117 @@ async function Main(): Promise<void> {
     records: template_catalog_inventory.data,
     section: template_catalog_section
   });
+  const execute_mutations = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_EXECUTE_MUTATIONS
+  );
+
+  const lxc_helper_template_reference = ResolveLxcHelperTemplateReference({
+    local_templates: ct_template_inventory.data,
+    catalog_templates: template_catalog_inventory.data,
+    fallback_storage: storage_id
+  });
+  const lxc_helper_bridge = ResolveLxcHelperBridge(bridge_interfaces);
+  const lxc_helper_disk_storage = ResolveLxcHelperDiskStorage({
+    lxc_disk_storage_options,
+    fallback_storage: storage_id
+  });
+  if (lxc_helper_template_reference === undefined) {
+    console.info(
+      '[example] lxc_helper_preview_skipped reason=no_ct_template_reference_available'
+    );
+  } else if (lxc_helper_bridge === undefined) {
+    console.info(
+      '[example] lxc_helper_preview_skipped reason=no_bridge_available'
+    );
+  } else {
+    const lxc_helper_container_id = ResolveLxcHelperContainerId(
+      process.env.PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID
+    );
+    const lxc_helper_dry_run = !execute_mutations;
+    const lxc_helper_hostname = ResolveLxcHelperHostname({
+      raw_hostname: process.env.PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME,
+      container_id: lxc_helper_container_id
+    });
+    console.info(
+      `[example] lxc_helper_request node=${node_id} container_id=${lxc_helper_container_id} template=${lxc_helper_template_reference} disk_storage=${lxc_helper_disk_storage} bridge=${lxc_helper_bridge} dry_run=${lxc_helper_dry_run} start_after_created=false`
+    );
+    try {
+      const lxc_helper_preview =
+        await proxmox_client.helpers.createLxcContainer({
+          general: {
+            node_id,
+            container_id: lxc_helper_container_id,
+            hostname: lxc_helper_hostname,
+            resource_pool:
+              selected_pool_id !== undefined && selected_pool_id !== 'unknown'
+                ? selected_pool_id
+                : undefined,
+            unprivileged_container: true,
+            nesting: true,
+            add_to_ha: false,
+            tags: ['example', 'helper']
+          },
+          template: {
+            storage: storage_id,
+            template: lxc_helper_template_reference
+          },
+          disks: {
+            storage: lxc_helper_disk_storage,
+            disk_size_gib: 8
+          },
+          cpu: {
+            cores: 1,
+            cpu_units: 100
+          },
+          memory: {
+            memory_mib: 512,
+            swap_mib: 512
+          },
+          network: {
+            name: 'eth0',
+            bridge: lxc_helper_bridge,
+            ipv4_mode: 'dhcp',
+            ipv6_mode: 'dhcp'
+          },
+          preflight: {
+            enabled: true,
+            enforce: false,
+            check_cpu: true,
+            check_memory: true
+          },
+          dry_run: lxc_helper_dry_run,
+          start_after_created: false
+        });
+      console.info(
+        `[example] lxc_helper_preview dry_run=${lxc_helper_preview.data.dry_run} preflight_checks=${lxc_helper_preview.data.preflight.checks.length} preflight_failed=${lxc_helper_preview.data.preflight.failed_checks}`
+      );
+      console.info(
+        `[example] lxc_helper_preview node=${lxc_helper_preview.data.node_id} container_id=${lxc_helper_preview.data.container_id} template=${lxc_helper_template_reference} disk_storage=${lxc_helper_disk_storage} bridge=${lxc_helper_bridge}`
+      );
+    } catch (error) {
+      if (error instanceof ProxmoxError) {
+        const status_code_suffix =
+          typeof error.status_code === 'number'
+            ? ` status_code=${error.status_code}`
+            : '';
+        const path_suffix =
+          typeof error.details?.path === 'string'
+            ? ` path=${error.details.path}`
+            : '';
+        console.error(
+          `[example] lxc_helper_error code=${error.code} message=${error.message}${status_code_suffix}${path_suffix}`
+        );
+        if (error.details !== undefined) {
+          console.error(
+            `[example] lxc_helper_error_details=${RenderUnknown(error.details)}`
+          );
+        }
+        LogErrorCauseChain(error);
+      } else {
+        throw error;
+      }
+    }
+  }
 
   const preflight_vm_path = ResolvePreflightVmPath({
     vm_records,
@@ -1124,9 +1436,6 @@ async function Main(): Promise<void> {
   }
 
   // Mutating operations are disabled by default to avoid accidental provisioning.
-  const execute_mutations = NormalizeBoolean(
-    process.env.PROXMOX_EXAMPLE_EXECUTE_MUTATIONS
-  );
   if (!execute_mutations) {
     console.info(
       '[example] storage_upload_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
@@ -1173,7 +1482,10 @@ async function Main(): Promise<void> {
   const download_destination_path =
     process.env.PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH?.trim() ||
     undefined;
-  if (download_volume_id === undefined || download_destination_path === undefined) {
+  if (
+    download_volume_id === undefined ||
+    download_destination_path === undefined
+  ) {
     console.info(
       '[example] storage_download_skipped reason=PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_VOLUME_ID_or_PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH_not_set'
     );
@@ -1181,13 +1493,14 @@ async function Main(): Promise<void> {
     const download_overwrite = NormalizeBoolean(
       process.env.PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_OVERWRITE
     );
-    const download_result = await proxmox_client.storage_service.downloadContent({
-      node_id,
-      storage: storage_id,
-      volume_id: download_volume_id,
-      destination_path: download_destination_path,
-      overwrite: download_overwrite
-    });
+    const download_result =
+      await proxmox_client.storage_service.downloadContent({
+        node_id,
+        storage: storage_id,
+        volume_id: download_volume_id,
+        destination_path: download_destination_path,
+        overwrite: download_overwrite
+      });
     console.info(
       `[example] storage_download_completed storage=${storage_id} volume_id=${download_volume_id} bytes_written=${download_result.data.bytes_written} destination_path=${download_result.data.destination_path}`
     );

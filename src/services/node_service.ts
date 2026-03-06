@@ -5,6 +5,9 @@ import { ProxmoxValidationError } from "../errors/proxmox_error";
 import {
   proxmox_node_list_query_i,
   proxmox_node_status_query_i,
+  proxmox_node_network_interfaces_query_i,
+  proxmox_node_network_interface_query_i,
+  proxmox_node_bridges_query_i,
   proxmox_node_cpu_capacity_query_i,
   proxmox_node_core_preflight_input_i,
   proxmox_node_memory_capacity_query_i,
@@ -16,6 +19,9 @@ import {
   proxmox_node_reboot_result_t,
   proxmox_node_list_response_t,
   proxmox_node_status_response_t,
+  proxmox_node_network_interface_response_t,
+  proxmox_node_network_interface_list_response_t,
+  proxmox_node_bridge_list_response_t,
   proxmox_node_cpu_capacity_response_t,
   proxmox_node_core_preflight_response_t,
   proxmox_node_memory_capacity_response_t,
@@ -70,6 +76,64 @@ export class NodeService {
       path: `/api2/json/nodes/${encodeURIComponent(node_id)}/status`,
       node_id,
     });
+  }
+
+  public async listNetworkInterfaces(
+    params: proxmox_node_network_interfaces_query_i,
+  ): Promise<proxmox_node_network_interface_list_response_t> {
+    const node_id = ValidateNodeId(params.node_id);
+    const type_filter = ValidateNetworkInterfaceTypeFilter(params.type);
+    const response = await this.request_client.request<unknown[]>({
+      method: "GET" as proxmox_http_method_t,
+      path: `/api2/json/nodes/${encodeURIComponent(node_id)}/network`,
+      node_id,
+      retry_allowed: true,
+    });
+    const normalized_interfaces = NormalizeNodeNetworkInterfaces({
+      raw_records: response.data,
+      type_filter,
+    });
+    return {
+      ...response,
+      data: normalized_interfaces,
+    };
+  }
+
+  public async listBridges(
+    params: proxmox_node_bridges_query_i,
+  ): Promise<proxmox_node_bridge_list_response_t> {
+    const node_id = ValidateNodeId(params.node_id);
+    const interfaces_response = await this.listNetworkInterfaces({
+      node_id,
+      type: "any_bridge",
+    });
+    return {
+      ...interfaces_response,
+      data: interfaces_response.data.map((record) => ({
+        ...record,
+        is_bridge: true,
+      })),
+    };
+  }
+
+  public async getNetworkInterface(
+    params: proxmox_node_network_interface_query_i,
+  ): Promise<proxmox_node_network_interface_response_t> {
+    const node_id = ValidateNodeId(params.node_id);
+    const interface_id = ValidateNetworkInterfaceId(params.interface_id);
+    const response = await this.request_client.request<unknown>({
+      method: "GET" as proxmox_http_method_t,
+      path: `/api2/json/nodes/${encodeURIComponent(node_id)}/network/${encodeURIComponent(interface_id)}`,
+      node_id,
+      retry_allowed: true,
+    });
+    return {
+      ...response,
+      data: NormalizeNodeNetworkInterfaceRecord({
+        raw_record: response.data,
+        fallback_interface_id: interface_id,
+      }),
+    };
   }
 
   public async getNodeCpuCapacity(
@@ -340,6 +404,44 @@ function ValidateCorePreflightMode(
   });
 }
 
+function ValidateNetworkInterfaceTypeFilter(
+  type_filter: "any_bridge" | "bridge" | "physical" | "vlan" | "bond" | undefined,
+): "any_bridge" | "bridge" | "physical" | "vlan" | "bond" | undefined {
+  if (type_filter === undefined) {
+    return undefined;
+  }
+  if (
+    type_filter === "any_bridge"
+    || type_filter === "bridge"
+    || type_filter === "physical"
+    || type_filter === "vlan"
+    || type_filter === "bond"
+  ) {
+    return type_filter;
+  }
+  throw new ProxmoxValidationError({
+    code: "proxmox.validation.invalid_input",
+    message: "type must be any_bridge, bridge, physical, vlan, or bond.",
+    details: {
+      field: "type",
+    },
+  });
+}
+
+function ValidateNetworkInterfaceId(interface_id: string): string {
+  const normalized_interface_id = interface_id.trim();
+  if (!normalized_interface_id) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "interface_id is required and cannot be empty.",
+      details: {
+        field: "interface_id",
+      },
+    });
+  }
+  return normalized_interface_id;
+}
+
 function ValidateRequestedMemoryBytes(requested_memory_bytes: number): number {
   if (!Number.isInteger(requested_memory_bytes) || requested_memory_bytes <= 0) {
     throw new ProxmoxValidationError({
@@ -369,6 +471,131 @@ function ValidateMemoryPreflightMode(
       field: "mode",
     },
   });
+}
+
+function NormalizeNodeNetworkInterfaces(params: {
+  raw_records: unknown;
+  type_filter?: "any_bridge" | "bridge" | "physical" | "vlan" | "bond";
+}): Array<{
+  interface_id: string;
+  type?: string;
+  active?: boolean;
+  autostart?: boolean;
+  is_bridge: boolean;
+  bridge_ports?: string[];
+  bridge_vlan_aware?: boolean;
+  address?: string;
+  cidr?: string;
+  method?: string;
+  comments?: string;
+  raw: Record<string, unknown>;
+}> {
+  if (!Array.isArray(params.raw_records)) {
+    return [];
+  }
+  const normalized_records: Array<{
+    interface_id: string;
+    type?: string;
+    active?: boolean;
+    autostart?: boolean;
+    is_bridge: boolean;
+    bridge_ports?: string[];
+    bridge_vlan_aware?: boolean;
+    address?: string;
+    cidr?: string;
+    method?: string;
+    comments?: string;
+    raw: Record<string, unknown>;
+  }> = [];
+  for (const raw_record of params.raw_records) {
+    const normalized_record = NormalizeNodeNetworkInterfaceRecord({
+      raw_record,
+    });
+    if (normalized_record.interface_id === "unknown") {
+      continue;
+    }
+    if (!IsNetworkInterfaceTypeMatch({
+      record: normalized_record,
+      type_filter: params.type_filter,
+    })) {
+      continue;
+    }
+    normalized_records.push(normalized_record);
+  }
+  return normalized_records;
+}
+
+function NormalizeNodeNetworkInterfaceRecord(params: {
+  raw_record: unknown;
+  fallback_interface_id?: string;
+}): {
+  interface_id: string;
+  type?: string;
+  active?: boolean;
+  autostart?: boolean;
+  is_bridge: boolean;
+  bridge_ports?: string[];
+  bridge_vlan_aware?: boolean;
+  address?: string;
+  cidr?: string;
+  method?: string;
+  comments?: string;
+  raw: Record<string, unknown>;
+} {
+  const record = ToRecord(params.raw_record);
+  const interface_id =
+    ToOptionalString(record.iface)
+    ?? ToOptionalString(record.interface)
+    ?? params.fallback_interface_id
+    ?? "unknown";
+  const type = ToOptionalString(record.type);
+  const normalized_type = type?.toLowerCase();
+  const is_bridge = normalized_type === "bridge" || normalized_type === "ovsbridge";
+  return {
+    interface_id,
+    type,
+    active: ToOptionalBoolean(record.active),
+    autostart: ToOptionalBoolean(record.autostart),
+    is_bridge,
+    bridge_ports: ToOptionalStringList(record.bridge_ports),
+    bridge_vlan_aware: ToOptionalBoolean(record.bridge_vlan_aware),
+    address: ToOptionalString(record.address),
+    cidr: ToOptionalString(record.cidr),
+    method: ToOptionalString(record.method),
+    comments: ToOptionalString(record.comments),
+    raw: record,
+  };
+}
+
+function IsNetworkInterfaceTypeMatch(params: {
+  record: {
+    interface_id: string;
+    type?: string;
+    is_bridge: boolean;
+  };
+  type_filter?: "any_bridge" | "bridge" | "physical" | "vlan" | "bond";
+}): boolean {
+  const type_filter = params.type_filter;
+  if (type_filter === undefined) {
+    return true;
+  }
+  const normalized_type = params.record.type?.toLowerCase();
+  if (type_filter === "any_bridge") {
+    return params.record.is_bridge;
+  }
+  if (type_filter === "bridge") {
+    return normalized_type === "bridge";
+  }
+  if (type_filter === "vlan") {
+    return normalized_type?.includes("vlan") === true;
+  }
+  if (type_filter === "bond") {
+    return normalized_type?.includes("bond") === true;
+  }
+  if (type_filter === "physical") {
+    return normalized_type === "eth" || normalized_type === "physical";
+  }
+  return false;
 }
 
 function NormalizeNodeCpuCapacity(params: {
@@ -746,6 +973,51 @@ function ToOptionalString(value: unknown): string | undefined {
   }
   const normalized_value = value.trim();
   return normalized_value || undefined;
+}
+
+function ToOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const normalized_value = value.trim().toLowerCase();
+    if (!normalized_value) {
+      return undefined;
+    }
+    if (normalized_value === "1" || normalized_value === "true" || normalized_value === "yes" || normalized_value === "on") {
+      return true;
+    }
+    if (normalized_value === "0" || normalized_value === "false" || normalized_value === "no" || normalized_value === "off") {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+function ToOptionalStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const normalized_list = value
+      .map((item) => ToOptionalString(item))
+      .filter((item): item is string => item !== undefined);
+    return normalized_list.length > 0 ? normalized_list : undefined;
+  }
+  if (typeof value === "string") {
+    const normalized_list = value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return normalized_list.length > 0 ? normalized_list : undefined;
+  }
+  return undefined;
 }
 
 function ToRecord(value: unknown): Record<string, unknown> {

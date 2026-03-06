@@ -20,6 +20,7 @@ Design goals:
 - typed request/response contracts in TypeScript
 - strict config parsing and validation at startup
 - secure defaults (`verify_tls` enabled, explicit auth providers, redaction-oriented diagnostics)
+- high-level helper composition for common workflows (for example, LXC create preflight + submit)
 
 ## Feature/capability matrix
 
@@ -45,6 +46,9 @@ Design goals:
 
 - `listNodes`
 - `getNodeStatus`
+- `listNetworkInterfaces`
+- `listBridges`
+- `getNetworkInterface`
 - `getNodeCpuCapacity`
 - `canAllocateCores`
 - `getNodeMemoryCapacity`
@@ -81,6 +85,10 @@ Design goals:
 - `snapshotContainer`
 - `restoreContainer`
 - `waitForTask`
+
+### `helpers` (`ProxmoxHelpers`)
+
+- `createLxcContainer` (high-level create/start orchestration with optional dry-run + preflight checks)
 
 ### `access_service` (`AccessService`)
 
@@ -339,6 +347,37 @@ for (const node of nodes.data) {
 }
 ```
 
+### Node network interfaces and bridge discovery
+
+```ts
+const interfaces = await client.node_service.listNetworkInterfaces({
+  node_id: 'g75'
+});
+
+const bridges = await client.node_service.listBridges({
+  node_id: 'g75'
+});
+
+for (const iface of interfaces.data) {
+  console.log(iface.interface_id, iface.type, iface.active, iface.is_bridge);
+}
+
+for (const bridge of bridges.data) {
+  console.log(bridge.interface_id, bridge.type, bridge.bridge_ports);
+}
+
+const vmbr0 = await client.node_service.getNetworkInterface({
+  node_id: 'g75',
+  interface_id: 'vmbr0'
+});
+console.log(vmbr0.data.interface_id, vmbr0.data.cidr);
+```
+
+Note:
+
+- bridge availability is node-scoped; query the node where VM/LXC creation will occur.
+- `listBridges` includes Linux bridges (`bridge`) and OVS bridges (`OVSBridge`) when present.
+
 ### Node CPU capacity and core preflight
 
 ```ts
@@ -441,6 +480,65 @@ if (container_list.data.length > 0) {
   console.log(container.data);
 }
 ```
+
+### High-level LXC creation helper
+
+```ts
+const helper_preview = await client.helpers.createLxcContainer({
+  general: {
+    node_id: 'g75',
+    container_id: 9100,
+    hostname: 'app-lxc-9100.local',
+    resource_pool: 'default',
+    unprivileged_container: true,
+    nesting: true,
+    add_to_ha: false,
+    tags: ['app', 'preview']
+  },
+  template: {
+    storage: 'local',
+    template: 'local:vztmpl/debian-12-standard_12.0-1_amd64.tar.zst'
+  },
+  disks: {
+    storage: 'local-lvm',
+    disk_size_gib: 8
+  },
+  cpu: {
+    cores: 2,
+    cpu_limit: 'unlimited',
+    cpu_units: 100
+  },
+  memory: {
+    memory_mib: 1024,
+    swap_mib: 512
+  },
+  network: {
+    name: 'eth0',
+    bridge: 'vmbr0',
+    ipv4_mode: 'dhcp',
+    ipv6_mode: 'dhcp'
+  },
+  dns: {
+    dns_domain: 'domain.local',
+    dns_servers: ['1.1.1.1', '8.8.8.8']
+  },
+  preflight: {
+    enabled: true,
+    enforce: false,
+    check_cpu: true,
+    check_memory: true
+  },
+  dry_run: true,
+  start_after_created: false
+});
+
+console.log(helper_preview.data.preflight);
+console.log(helper_preview.data.config);
+```
+
+To actually create and optionally start the container, set `dry_run: false`.
+`start_after_created: true` triggers a follow-up `startContainer` call after create succeeds.
+If `general.add_to_ha: true`, the helper attempts HA registration via `/cluster/ha/resources` and returns a typed validation error when HA is unavailable in the current cluster context.
 
 ### Storage content operations (backups/ISO/templates)
 
@@ -566,6 +664,8 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_DESTINATION_PATH` (both required to enable download example)
 - `PROXMOX_EXAMPLE_STORAGE_DOWNLOAD_OVERWRITE` (optional boolean)
 - `PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE=true` (both required to enable delete example)
+- `PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID` (optional container ID for helper dry-run preview, default: `9100`)
+- `PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME` (optional hostname for helper dry-run preview)
 
 ### Permission introspection (current identity)
 
@@ -705,5 +805,6 @@ Exports include:
 - config helpers: `LoadConfig`, `ValidateConfig`, `ResolveProfile`, `ResolveSecrets`, `BuildConfigDiagnostics`, `EmitStartupDiagnostics`, `ResolveConfigPath`
 - client: `ProxmoxClient`
 - services: `DatacenterService`, `ClusterService`, `PoolService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
+- helpers: `LxcHelper`, `ProxmoxHelpers`
 - shared config/http/service types
 - typed error classes and HTTP error mapper

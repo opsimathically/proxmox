@@ -216,6 +216,237 @@ test("NodeService propagates auth failures for cpu capacity calls.", async () =>
   );
 });
 
+test("NodeService listNetworkInterfaces normalizes node network records.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data_by_path["/api2/json/nodes/node-a/network"] = [
+    {
+      iface: "vmbr0",
+      type: "bridge",
+      active: 1,
+      autostart: 1,
+      bridge_ports: "eno1",
+      bridge_vlan_aware: 1,
+      address: "192.168.11.1",
+      cidr: "192.168.11.1/24",
+    },
+    {
+      iface: "vmbr1",
+      type: "OVSBridge",
+      active: "1",
+      autostart: "0",
+      bridge_ports: ["bond0"],
+      bridge_vlan_aware: "true",
+    },
+    {
+      iface: "bond0",
+      type: "bond",
+      active: 1,
+    },
+    {
+      iface: "vlan100",
+      type: "vlan",
+      active: 1,
+    },
+    {
+      iface: "eno1",
+      type: "eth",
+      active: 1,
+      autostart: 1,
+    },
+    "invalid",
+  ];
+  const service = new NodeService({
+    request_client,
+  });
+
+  const response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+  });
+
+  assert.equal(request_client.requests.length, 1);
+  assert.equal(request_client.requests[0].path, "/api2/json/nodes/node-a/network");
+  assert.equal(response.data.length, 5);
+  assert.equal(response.data[0].interface_id, "vmbr0");
+  assert.equal(response.data[0].is_bridge, true);
+  assert.deepEqual(response.data[0].bridge_ports, ["eno1"]);
+  assert.equal(response.data[0].bridge_vlan_aware, true);
+  assert.equal(response.data[1].interface_id, "vmbr1");
+  assert.equal(response.data[1].is_bridge, true);
+  assert.equal(response.data[1].autostart, false);
+  assert.equal(response.data[4].interface_id, "eno1");
+  assert.equal(response.data[4].is_bridge, false);
+});
+
+test("NodeService listNetworkInterfaces applies supported type filters.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data_by_path["/api2/json/nodes/node-a/network"] = [
+    {
+      iface: "vmbr0",
+      type: "bridge",
+    },
+    {
+      iface: "vmbr1",
+      type: "OVSBridge",
+    },
+    {
+      iface: "bond0",
+      type: "bond",
+    },
+    {
+      iface: "vlan100",
+      type: "vlan",
+    },
+    {
+      iface: "eno1",
+      type: "eth",
+    },
+  ];
+  const service = new NodeService({
+    request_client,
+  });
+
+  const any_bridge_response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+    type: "any_bridge",
+  });
+  const bridge_response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+    type: "bridge",
+  });
+  const bond_response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+    type: "bond",
+  });
+  const vlan_response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+    type: "vlan",
+  });
+  const physical_response = await service.listNetworkInterfaces({
+    node_id: "node-a",
+    type: "physical",
+  });
+
+  assert.equal(any_bridge_response.data.length, 2);
+  assert.equal(any_bridge_response.data[0].interface_id, "vmbr0");
+  assert.equal(any_bridge_response.data[1].interface_id, "vmbr1");
+  assert.equal(bridge_response.data.length, 1);
+  assert.equal(bridge_response.data[0].interface_id, "vmbr0");
+  assert.equal(bond_response.data.length, 1);
+  assert.equal(bond_response.data[0].interface_id, "bond0");
+  assert.equal(vlan_response.data.length, 1);
+  assert.equal(vlan_response.data[0].interface_id, "vlan100");
+  assert.equal(physical_response.data.length, 1);
+  assert.equal(physical_response.data[0].interface_id, "eno1");
+});
+
+test("NodeService listBridges returns normalized bridge-only records.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data_by_path["/api2/json/nodes/node-a/network"] = [
+    {
+      iface: "vmbr0",
+      type: "bridge",
+    },
+    {
+      iface: "vmbr1",
+      type: "OVSBridge",
+    },
+    {
+      iface: "eno1",
+      type: "eth",
+    },
+  ];
+  const service = new NodeService({
+    request_client,
+  });
+
+  const response = await service.listBridges({
+    node_id: "node-a",
+  });
+
+  assert.equal(response.data.length, 2);
+  assert.equal(response.data[0].interface_id, "vmbr0");
+  assert.equal(response.data[0].is_bridge, true);
+  assert.equal(response.data[1].interface_id, "vmbr1");
+  assert.equal(response.data[1].is_bridge, true);
+});
+
+test("NodeService getNetworkInterface maps detail endpoint response.", async () => {
+  const request_client = new FakeRequestClient();
+  request_client.response_data_by_path["/api2/json/nodes/node-a/network/vmbr0"] = {
+    iface: "vmbr0",
+    type: "bridge",
+    active: 1,
+    autostart: 1,
+    bridge_ports: "eno1,eno2",
+  };
+  const service = new NodeService({
+    request_client,
+  });
+
+  const response = await service.getNetworkInterface({
+    node_id: "node-a",
+    interface_id: "vmbr0",
+  });
+
+  assert.equal(request_client.requests.length, 1);
+  assert.equal(request_client.requests[0].path, "/api2/json/nodes/node-a/network/vmbr0");
+  assert.equal(response.data.interface_id, "vmbr0");
+  assert.equal(response.data.is_bridge, true);
+  assert.deepEqual(response.data.bridge_ports, ["eno1", "eno2"]);
+});
+
+test("NodeService validates network interface input and propagates auth failures.", async () => {
+  const request_client = new FakeRequestClient();
+  const service = new NodeService({
+    request_client,
+  });
+
+  await assert.rejects(
+    async () => service.listNetworkInterfaces({
+      node_id: " ",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ProxmoxValidationError);
+      assert.equal(error.code, "proxmox.validation.invalid_input");
+      assert.equal(error.details?.field, "node_id");
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    async () => service.getNetworkInterface({
+      node_id: "node-a",
+      interface_id: " ",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ProxmoxValidationError);
+      assert.equal(error.code, "proxmox.validation.invalid_input");
+      assert.equal(error.details?.field, "interface_id");
+      return true;
+    },
+  );
+
+  const denied_request_client = new FakeRequestClient();
+  denied_request_client.error_to_throw = new ProxmoxAuthError({
+    code: "proxmox.auth.invalid_token",
+    message: "Authorization failed for Proxmox request.",
+    status_code: 403,
+  });
+  const denied_service = new NodeService({
+    request_client: denied_request_client,
+  });
+  await assert.rejects(
+    async () => denied_service.listBridges({
+      node_id: "node-a",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ProxmoxAuthError);
+      assert.equal(error.code, "proxmox.auth.invalid_token");
+      return true;
+    },
+  );
+});
+
 test("NodeService getNodeMemoryCapacity parses total/used/free memory from node status.", async () => {
   const request_client = new FakeRequestClient();
   request_client.response_data = {

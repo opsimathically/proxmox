@@ -68,6 +68,23 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
       const body_payload = request.body === undefined
         ? ""
         : JSON.stringify(request.body);
+      const request_headers: Record<string, string> = {
+        ...headers,
+      };
+      if (body_payload.length > 0) {
+        if (!HasHeader({
+          headers: request_headers,
+          header_name: "content-type",
+        })) {
+          request_headers["content-type"] = "application/json";
+        }
+        if (!HasHeader({
+          headers: request_headers,
+          header_name: "content-length",
+        })) {
+          request_headers["content-length"] = String(Buffer.byteLength(body_payload, "utf8"));
+        }
+      }
       const verify_tls = context.verify_tls ?? this.verify_tls_default;
       const keep_alive_ms = context.keep_alive_ms ?? this.keep_alive_ms_default;
 
@@ -78,10 +95,7 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
       const response = await this.performRequest({
         request_url,
         request_method: request.method,
-        request_headers: {
-          "content-type": "application/json",
-          ...headers,
-        },
+        request_headers,
         request_body: body_payload,
         timeout_ms,
         keep_alive_ms,
@@ -228,4 +242,12 @@ export class FetchHttpTransport implements prox_mox_http_transport_i {
     this.https_agent_cache.set(cache_key, agent);
     return agent;
   }
+}
+
+function HasHeader(params: {
+  headers: Record<string, string>;
+  header_name: string;
+}): boolean {
+  const expected = params.header_name.toLowerCase();
+  return Object.keys(params.headers).some((key_name) => key_name.toLowerCase() === expected);
 }

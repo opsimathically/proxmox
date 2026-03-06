@@ -227,3 +227,49 @@ test("FetchHttpTransport avoids TLS-only options for HTTP requests.", async () =
   assert.equal(agent.options?.rejectUnauthorized, undefined);
   assert.equal(agent.options?.ca, undefined);
 });
+
+test("FetchHttpTransport sets content-length for JSON request bodies to avoid chunked encoding.", async () => {
+  let captured_options: http.RequestOptions | undefined;
+  const http_request_stub = ((
+    _url: URL | string,
+    options: http.RequestOptions | undefined,
+    callback?: (res: http.IncomingMessage) => void,
+  ): http.ClientRequest => {
+    captured_options = options;
+    if (callback) {
+      callback(CreateMockIncomingMessage({
+        status_code: 200,
+        status_message: "OK",
+        headers: { "content-type": "application/json" },
+        body: "{\"data\":\"ok\"}",
+      }));
+    }
+    return CreateMockClientRequest();
+  }) as typeof http.request;
+
+  const transport = new FetchHttpTransport({
+    keep_alive_ms_default: 30000,
+    http_request_impl: http_request_stub,
+  });
+
+  await transport.request({
+    request: {
+      method: "POST",
+      path: "/api2/json/nodes/node-a/lxc",
+      body: {
+        hostname: "ct.example",
+        rootfs: "local-lvm:8",
+      },
+    },
+    context: {
+      base_url: "http://proxmox.internal:8006",
+      verify_tls: true,
+      keep_alive_ms: 30000,
+    },
+  });
+
+  const headers = captured_options?.headers as Record<string, string> | undefined;
+  assert.equal(typeof headers?.["content-length"], "string");
+  assert.equal(Number.parseInt(headers?.["content-length"] ?? "", 10) > 0, true);
+  assert.equal(headers?.["content-type"], "application/json");
+});

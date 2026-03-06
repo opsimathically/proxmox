@@ -157,16 +157,19 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
 
       if (raw_response.status < 200 || raw_response.status >= 300) {
         const parsed_error = this.parser.parseResponse<unknown>(raw_response);
-        const message = typeof parsed_error.message === "string"
-          ? parsed_error.message
-          : typeof parsed_error.data === "string"
-            ? parsed_error.data
-            : "Proxmox request returned an error response.";
+        const message = ResolveErrorMessage({
+          parsed_error,
+          raw_status: raw_response.status,
+          raw_body: raw_response.body,
+        });
         throw MapHttpStatusToProxmoxError({
           status_code: raw_response.status,
           message,
           path: normalized_path,
-          body: parsed_error.data,
+          body: BuildSafeErrorCause({
+            parsed_data: parsed_error.data,
+            raw_body: raw_response.body,
+          }),
         });
       }
 
@@ -242,6 +245,216 @@ function SleepMs(delay_ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, delay_ms);
   });
+}
+
+function ResolveErrorMessage(params: {
+  parsed_error: proxmox_api_response_t<unknown>;
+  raw_status: number;
+  raw_body: string;
+}): string {
+  const parsed_message = typeof params.parsed_error.message === "string"
+    ? params.parsed_error.message.trim()
+    : "";
+  if (parsed_message.length > 0) {
+    return parsed_message;
+  }
+
+  if (typeof params.parsed_error.data === "string") {
+    const summarized = SummarizeText(params.parsed_error.data);
+    if (summarized.length > 0) {
+      return summarized;
+    }
+  }
+
+  if (IsRecord(params.parsed_error.data)) {
+    const object_summary = SummarizeRecordForMessage(params.parsed_error.data);
+    if (object_summary !== undefined) {
+      return object_summary;
+    }
+  }
+
+  const raw_body_summary = SummarizeText(params.raw_body);
+  if (raw_body_summary.length > 0 && raw_body_summary !== "{}") {
+    return raw_body_summary;
+  }
+
+  return `Proxmox request returned HTTP ${params.raw_status}.`;
+}
+
+function BuildSafeErrorCause(params: {
+  parsed_data: unknown;
+  raw_body: string;
+}): unknown {
+  const parsed_data = SanitizeErrorValue({
+    value: params.parsed_data,
+    depth: 0,
+  });
+  if (parsed_data !== undefined) {
+    if (IsRecord(parsed_data)) {
+      return parsed_data;
+    }
+    return {
+      body_excerpt: ToSafeString(parsed_data) ?? SummarizeText(String(parsed_data)),
+    };
+  }
+
+  const summarized_body = SummarizeText(params.raw_body);
+  if (summarized_body.length > 0) {
+    return {
+      body_excerpt: summarized_body,
+    };
+  }
+
+  return {
+    body_excerpt: "empty_response_body",
+  };
+}
+
+function SummarizeRecordForMessage(value: Record<string, unknown>): string | undefined {
+  const candidate_keys = ["message", "error", "reason", "errors", "data"];
+  for (const key_name of candidate_keys) {
+    if (!(key_name in value)) {
+      continue;
+    }
+    const key_value = value[key_name];
+    if (typeof key_value === "string" && key_value.trim().length > 0) {
+      return SummarizeText(key_value);
+    }
+    if (IsRecord(key_value)) {
+      const pairs: string[] = [];
+      for (const [nested_key, nested_value] of Object.entries(key_value)) {
+        const nested_text = ToSafeString(nested_value);
+        if (!nested_text) {
+          continue;
+        }
+        pairs.push(`${nested_key}: ${nested_text}`);
+        if (pairs.length >= 8) {
+          break;
+        }
+      }
+      if (pairs.length > 0) {
+        return SummarizeText(pairs.join("; "));
+      }
+    }
+    if (Array.isArray(key_value)) {
+      const entries = key_value
+        .map((entry) => ToSafeString(entry))
+        .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+        .slice(0, 8);
+      if (entries.length > 0) {
+        return SummarizeText(entries.join("; "));
+      }
+    }
+  }
+  return undefined;
+}
+
+function SanitizeErrorValue(params: {
+  value: unknown;
+  depth: number;
+}): unknown {
+  if (params.value === undefined || params.value === null) {
+    return undefined;
+  }
+
+  if (typeof params.value === "string") {
+    const summarized = SummarizeText(params.value);
+    return summarized.length > 0 ? summarized : undefined;
+  }
+
+  if (typeof params.value === "number" || typeof params.value === "boolean") {
+    return params.value;
+  }
+
+  if (params.depth >= 3) {
+    return "[truncated]";
+  }
+
+  if (Array.isArray(params.value)) {
+    const output: unknown[] = [];
+    for (const entry of params.value.slice(0, 20)) {
+      const sanitized_entry = SanitizeErrorValue({
+        value: entry,
+        depth: params.depth + 1,
+      });
+      if (sanitized_entry !== undefined) {
+        output.push(sanitized_entry);
+      }
+    }
+    return output.length > 0 ? output : undefined;
+  }
+
+  if (!IsRecord(params.value)) {
+    return ToSafeString(params.value) ?? undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  let added_count = 0;
+  for (const [key_name, key_value] of Object.entries(params.value)) {
+    if (added_count >= 20) {
+      break;
+    }
+    if (ShouldRedactErrorField(key_name)) {
+      output[key_name] = "[redacted]";
+      added_count += 1;
+      continue;
+    }
+
+    const sanitized_value = SanitizeErrorValue({
+      value: key_value,
+      depth: params.depth + 1,
+    });
+    if (sanitized_value !== undefined) {
+      output[key_name] = sanitized_value;
+      added_count += 1;
+    }
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function ShouldRedactErrorField(field_name: string): boolean {
+  const lowered = field_name.toLowerCase();
+  return lowered.includes("token")
+    || lowered.includes("password")
+    || lowered.includes("secret")
+    || lowered.includes("authorization")
+    || lowered.includes("authheader")
+    || lowered.includes("ssh-public-key")
+    || lowered.includes("ssh_public_key");
+}
+
+function ToSafeString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) {
+      return undefined;
+    }
+    return SummarizeText(normalized);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function SummarizeText(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  const max_length = 400;
+  if (normalized.length <= max_length) {
+    return normalized;
+  }
+  return `${normalized.slice(0, max_length - 3)}...`;
+}
+
+function IsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function BuildRequestClientNode(params: {

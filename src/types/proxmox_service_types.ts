@@ -75,6 +75,25 @@ export interface proxmox_node_metrics_record_i {
   values?: unknown[];
 }
 
+export interface proxmox_node_network_interface_record_i {
+  interface_id: string;
+  type?: string;
+  active?: boolean;
+  autostart?: boolean;
+  is_bridge: boolean;
+  bridge_ports?: string[];
+  bridge_vlan_aware?: boolean;
+  address?: string;
+  cidr?: string;
+  method?: string;
+  comments?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_node_bridge_record_i extends proxmox_node_network_interface_record_i {
+  is_bridge: true;
+}
+
 export type proxmox_vm_id_t = string | number;
 export type proxmox_lxc_id_t = string | number;
 
@@ -315,6 +334,92 @@ export interface proxmox_lxc_restore_input_i extends proxmox_lxc_reference_input
   force?: boolean;
 }
 
+export type proxmox_lxc_helper_ipv4_mode_t = "dhcp" | "static" | "none";
+export type proxmox_lxc_helper_ipv6_mode_t = "dhcp" | "static" | "slaac" | "none";
+
+export interface proxmox_lxc_helper_general_input_i {
+  node_id: string;
+  container_id: proxmox_lxc_id_t;
+  hostname: string;
+  resource_pool?: string;
+  password?: string;
+  ssh_public_keys?: string | string[];
+  unprivileged_container?: boolean;
+  nesting?: boolean;
+  add_to_ha?: boolean;
+  tags?: string[];
+}
+
+export interface proxmox_lxc_helper_template_input_i {
+  storage: string;
+  template: string;
+}
+
+export interface proxmox_lxc_helper_disks_input_i {
+  storage: string;
+  disk_size_gib: number;
+}
+
+export interface proxmox_lxc_helper_cpu_input_i {
+  cores?: number;
+  cpu_limit?: number | "unlimited";
+  cpu_units?: number;
+}
+
+export interface proxmox_lxc_helper_memory_input_i {
+  memory_mib?: number;
+  swap_mib?: number;
+}
+
+export interface proxmox_lxc_helper_network_input_i {
+  name?: string;
+  mac_address?: string;
+  bridge: string;
+  vlan_tag?: number;
+  ipv4_mode?: proxmox_lxc_helper_ipv4_mode_t;
+  ipv4_cidr?: string;
+  ipv4_gateway?: string;
+  ipv6_mode?: proxmox_lxc_helper_ipv6_mode_t;
+  ipv6_cidr?: string;
+  ipv6_gateway?: string;
+  disconnect?: boolean;
+  rate_limit_mbps?: number;
+  mtu?: number;
+  host_managed?: boolean;
+}
+
+export interface proxmox_lxc_helper_dns_input_i {
+  dns_domain?: string;
+  dns_servers?: string | string[];
+}
+
+export interface proxmox_lxc_helper_preflight_input_i {
+  enabled?: boolean;
+  enforce?: boolean;
+  check_node_exists?: boolean;
+  check_container_id_available?: boolean;
+  check_storage_rootdir?: boolean;
+  check_template_exists?: boolean;
+  check_bridge_exists?: boolean;
+  check_cpu?: boolean;
+  check_memory?: boolean;
+  cpu_mode?: "logical" | "physical";
+  memory_mode?: "free_headroom" | "allocated_headroom";
+}
+
+export interface proxmox_lxc_helper_create_input_i extends proxmox_task_options_input_i {
+  general: proxmox_lxc_helper_general_input_i;
+  template: proxmox_lxc_helper_template_input_i;
+  disks: proxmox_lxc_helper_disks_input_i;
+  cpu?: proxmox_lxc_helper_cpu_input_i;
+  memory?: proxmox_lxc_helper_memory_input_i;
+  network?: proxmox_lxc_helper_network_input_i;
+  dns?: proxmox_lxc_helper_dns_input_i;
+  preflight?: proxmox_lxc_helper_preflight_input_i;
+  start_after_created?: boolean;
+  dry_run?: boolean;
+}
+
 export interface proxmox_task_wait_record_i {
   task_id: string;
   node_id: string;
@@ -371,6 +476,23 @@ export interface proxmox_node_list_query_i {
 }
 
 export interface proxmox_node_status_query_i {
+  node_id: string;
+}
+
+export type proxmox_node_network_type_filter_t =
+  "any_bridge" | "bridge" | "physical" | "vlan" | "bond";
+
+export interface proxmox_node_network_interfaces_query_i {
+  node_id: string;
+  type?: proxmox_node_network_type_filter_t;
+}
+
+export interface proxmox_node_network_interface_query_i {
+  node_id: string;
+  interface_id: string;
+}
+
+export interface proxmox_node_bridges_query_i {
   node_id: string;
 }
 
@@ -612,6 +734,30 @@ export interface proxmox_storage_download_record_i {
   bytes_written: number;
 }
 
+export interface proxmox_lxc_helper_preflight_check_record_i {
+  check: string;
+  passed: boolean;
+  reason: string;
+}
+
+export interface proxmox_lxc_helper_preflight_result_record_i {
+  executed: boolean;
+  enforce: boolean;
+  failed_checks: number;
+  checks: proxmox_lxc_helper_preflight_check_record_i[];
+}
+
+export interface proxmox_lxc_helper_create_record_i {
+  node_id: string;
+  container_id: string;
+  dry_run: boolean;
+  config: proxmox_api_config_record_i;
+  preflight: proxmox_lxc_helper_preflight_result_record_i;
+  create_task?: proxmox_lxc_task_result_t;
+  start_task?: proxmox_lxc_task_result_t;
+  ha_added?: boolean;
+}
+
 export type proxmox_datacenter_summary_t = proxmox_datacenter_summary_record_i;
 export type proxmox_datacenter_storage_list_t = proxmox_datacenter_storage_record_i[];
 export type proxmox_datacenter_version_t = proxmox_version_info_i;
@@ -621,6 +767,10 @@ export type proxmox_node_list_t = proxmox_node_record_i[];
 export type proxmox_node_status_t = proxmox_node_status_record_i;
 export type proxmox_node_services_t = proxmox_node_service_record_i[];
 export type proxmox_node_metrics_t = proxmox_node_metrics_record_i[];
+export type proxmox_node_network_interface_t = proxmox_node_network_interface_record_i;
+export type proxmox_node_network_interface_list_t = proxmox_node_network_interface_t[];
+export type proxmox_node_bridge_t = proxmox_node_bridge_record_i;
+export type proxmox_node_bridge_list_t = proxmox_node_bridge_t[];
 export type proxmox_node_reboot_started_t = proxmox_task_wait_record_i;
 export type proxmox_node_reboot_completed_t = proxmox_task_completed_record_i;
 export type proxmox_node_reboot_result_t = proxmox_node_reboot_started_t | proxmox_node_reboot_completed_t;
@@ -643,6 +793,9 @@ export type proxmox_node_list_response_t = proxmox_api_response_t<proxmox_node_l
 export type proxmox_node_status_response_t = proxmox_api_response_t<proxmox_node_status_t>;
 export type proxmox_node_services_response_t = proxmox_api_response_t<proxmox_node_services_t>;
 export type proxmox_node_metrics_response_t = proxmox_api_response_t<proxmox_node_metrics_t>;
+export type proxmox_node_network_interface_response_t = proxmox_api_response_t<proxmox_node_network_interface_t>;
+export type proxmox_node_network_interface_list_response_t = proxmox_api_response_t<proxmox_node_network_interface_list_t>;
+export type proxmox_node_bridge_list_response_t = proxmox_api_response_t<proxmox_node_bridge_list_t>;
 export type proxmox_node_reboot_response_t = proxmox_api_response_t<proxmox_node_reboot_result_t>;
 export type proxmox_node_cpu_capacity_response_t = proxmox_api_response_t<proxmox_node_cpu_capacity_t>;
 export type proxmox_node_core_preflight_response_t = proxmox_api_response_t<proxmox_node_core_preflight_t>;
@@ -665,10 +818,14 @@ export type proxmox_storage_template_catalog_record_t = proxmox_storage_template
 export type proxmox_storage_template_catalog_list_t = proxmox_storage_template_catalog_record_t[];
 export type proxmox_storage_task_t = proxmox_storage_task_record_i;
 export type proxmox_storage_download_t = proxmox_storage_download_record_i;
+export type proxmox_lxc_helper_preflight_check_t = proxmox_lxc_helper_preflight_check_record_i;
+export type proxmox_lxc_helper_preflight_result_t = proxmox_lxc_helper_preflight_result_record_i;
+export type proxmox_lxc_helper_create_t = proxmox_lxc_helper_create_record_i;
 export type proxmox_storage_content_list_response_t = proxmox_api_response_t<proxmox_storage_content_list_t>;
 export type proxmox_storage_template_catalog_response_t = proxmox_api_response_t<proxmox_storage_template_catalog_list_t>;
 export type proxmox_storage_task_response_t = proxmox_api_response_t<proxmox_storage_task_t>;
 export type proxmox_storage_download_response_t = proxmox_api_response_t<proxmox_storage_download_t>;
+export type proxmox_lxc_helper_create_response_t = proxmox_api_response_t<proxmox_lxc_helper_create_t>;
 
 export type proxmox_vm_record_t = proxmox_vm_record_i;
 export type proxmox_lxc_record_t = proxmox_lxc_record_i;

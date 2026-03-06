@@ -808,3 +808,9 @@ Exports include:
 - helpers: `LxcHelper`, `ProxmoxHelpers`
 - shared config/http/service types
 - typed error classes and HTTP error mapper
+
+## Project Status and Risk Notice
+
+This repository is maintained primarily for the author’s own operational and development needs.
+Stability is not guaranteed, and interfaces/behavior may change at any time without notice.
+If you choose to use this code, you do so at your own risk.

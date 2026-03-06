@@ -175,6 +175,47 @@ export interface proxmox_access_privilege_check_target_query_i extends proxmox_a
   auth_id: string;
 }
 
+export type proxmox_storage_content_filter_t = "backup" | "iso" | "vztmpl";
+export type proxmox_storage_content_kind_t = proxmox_storage_content_filter_t | "unknown";
+
+export interface proxmox_storage_content_list_query_i {
+  node_id: string;
+  storage: string;
+  content?: proxmox_storage_content_filter_t;
+  vmid?: proxmox_vm_id_t;
+}
+
+export interface proxmox_storage_delete_input_i {
+  node_id: string;
+  storage: string;
+  volume_id: string;
+  delay?: number;
+}
+
+export interface proxmox_storage_upload_input_i {
+  node_id: string;
+  storage: string;
+  content_type: "iso" | "vztmpl";
+  file_path: string;
+  filename?: string;
+  checksum?: string;
+  checksum_algorithm?: string;
+}
+
+export interface proxmox_storage_download_input_i {
+  node_id: string;
+  storage: string;
+  volume_id: string;
+  destination_path: string;
+  overwrite?: boolean;
+}
+
+export interface proxmox_storage_permission_query_i {
+  node_id: string;
+  storage: string;
+  auth_id?: string;
+}
+
 export interface proxmox_vm_create_input_i extends proxmox_task_target_input_i, proxmox_task_options_input_i {
   vm_id?: proxmox_vm_id_t;
   config: proxmox_api_config_record_i;
@@ -382,6 +423,38 @@ export interface proxmox_access_privilege_check_record_i {
   privileges: proxmox_access_privileges_t;
 }
 
+export interface proxmox_storage_content_record_i {
+  volume_id: string;
+  storage?: string;
+  node?: string;
+  content?: string;
+  normalized_content: proxmox_storage_content_kind_t;
+  format?: string;
+  size?: number;
+  vmid?: string | number;
+  ctime?: number;
+  notes?: string;
+  protected?: number | boolean;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_storage_task_record_i {
+  operation: "delete_content" | "upload_content";
+  node_id: string;
+  storage: string;
+  volume_id?: string;
+  task_id: string;
+  content_type?: "iso" | "vztmpl";
+}
+
+export interface proxmox_storage_download_record_i {
+  node_id: string;
+  storage: string;
+  volume_id: string;
+  destination_path: string;
+  bytes_written: number;
+}
+
 export type proxmox_datacenter_summary_t = proxmox_datacenter_summary_record_i;
 export type proxmox_datacenter_storage_list_t = proxmox_datacenter_storage_record_i[];
 export type proxmox_datacenter_version_t = proxmox_version_info_i;
@@ -408,6 +481,13 @@ export type proxmox_node_metrics_response_t = proxmox_api_response_t<proxmox_nod
 export type proxmox_node_reboot_response_t = proxmox_api_response_t<proxmox_node_reboot_result_t>;
 export type proxmox_access_permissions_response_t = proxmox_api_response_t<proxmox_access_permissions_record_i>;
 export type proxmox_access_privilege_check_response_t = proxmox_api_response_t<proxmox_access_privilege_check_record_i>;
+export type proxmox_storage_content_record_t = proxmox_storage_content_record_i;
+export type proxmox_storage_content_list_t = proxmox_storage_content_record_t[];
+export type proxmox_storage_task_t = proxmox_storage_task_record_i;
+export type proxmox_storage_download_t = proxmox_storage_download_record_i;
+export type proxmox_storage_content_list_response_t = proxmox_api_response_t<proxmox_storage_content_list_t>;
+export type proxmox_storage_task_response_t = proxmox_api_response_t<proxmox_storage_task_t>;
+export type proxmox_storage_download_response_t = proxmox_api_response_t<proxmox_storage_download_t>;
 
 export type proxmox_vm_record_t = proxmox_vm_record_i;
 export type proxmox_lxc_record_t = proxmox_lxc_record_i;

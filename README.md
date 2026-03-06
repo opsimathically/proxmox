@@ -76,6 +76,47 @@ Design goals:
 - `hasCurrentPrivilege`
 - `hasIdentityPrivilege`
 
+### `storage_service` (`StorageService`)
+
+- `listStorageContent`
+- `listBackups`
+- `listIsoImages`
+- `listCtTemplates`
+- `deleteContent`
+- `uploadContent`
+- `downloadContent`
+- `canAuditStorage`
+- `canAllocateTemplate`
+- `canAllocateSpace`
+- `canModifyPermissions`
+
+## Breaking change: camelCase only
+
+PascalCase method aliases were removed. Use camelCase methods only.
+
+Migration map:
+
+- `ProxmoxClient.FromPath` -> `ProxmoxClient.fromPath`
+- `DatacenterService.GetSummary` -> `DatacenterService.getSummary`
+- `DatacenterService.GetVersion` -> `DatacenterService.getVersion`
+- `DatacenterService.ListStorage` -> `DatacenterService.listStorage`
+- `ClusterService.GetStatus` -> `ClusterService.getStatus`
+- `ClusterService.GetMembership` -> `ClusterService.getMembership`
+- `ClusterService.ListNodes` -> `ClusterService.listNodes`
+- `NodeService.ListNodes` -> `NodeService.listNodes`
+- `NodeService.GetNodeStatus` -> `NodeService.getNodeStatus`
+- `NodeService.GetServices` -> `NodeService.getServices`
+- `NodeService.GetNodeMetrics` -> `NodeService.getNodeMetrics`
+- `NodeService.RebootNode` -> `NodeService.rebootNode`
+- `ProxmoxRequestClient.Request` -> `ProxmoxRequestClient.request`
+- `ProxmoxRequestClient.ResolveNode` -> `ProxmoxRequestClient.resolveNode`
+- `TaskPoller.WaitForTaskCompletion` -> `TaskPoller.waitForTaskCompletion`
+- `TaskPoller.GetDefaultIntervalMs` -> `TaskPoller.getDefaultIntervalMs`
+- `FetchHttpTransport.Request` -> `FetchHttpTransport.request`
+- `AuthProvider.GetAuthHeader` -> `AuthProvider.getAuthHeader`
+- `AuthProvider.GetTokenFingerprint` -> `AuthProvider.getTokenFingerprint`
+- `ProxmoxApiParser.ParseResponse` -> `ProxmoxApiParser.parseResponse`
+
 ## Installation and requirements
 
 Requirements:
@@ -343,6 +384,67 @@ if (container_list.data.length > 0) {
 }
 ```
 
+### Storage content operations (backups/ISO/templates)
+
+```ts
+const backups = await client.storage_service.listBackups({
+  node_id: 'g75',
+  storage: 'local'
+});
+
+const iso_images = await client.storage_service.listIsoImages({
+  node_id: 'g75',
+  storage: 'local'
+});
+
+const ct_templates = await client.storage_service.listCtTemplates({
+  node_id: 'g75',
+  storage: 'local'
+});
+```
+
+```ts
+const uploaded = await client.storage_service.uploadContent({
+  node_id: 'g75',
+  storage: 'local',
+  content_type: 'iso',
+  file_path: '/tmp/debian-12.iso'
+});
+
+const downloaded = await client.storage_service.downloadContent({
+  node_id: 'g75',
+  storage: 'local',
+  volume_id: 'local:iso/debian-12.iso',
+  destination_path: '/tmp/debian-12-downloaded.iso',
+  overwrite: false
+});
+
+const deleted = await client.storage_service.deleteContent({
+  node_id: 'g75',
+  storage: 'local',
+  volume_id: 'local:iso/debian-12.iso'
+});
+```
+
+```ts
+const can_template = await client.storage_service.canAllocateTemplate({
+  node_id: 'g75',
+  storage: 'local'
+});
+
+const can_modify_storage_perms =
+  await client.storage_service.canModifyPermissions({
+    node_id: 'g75',
+    storage: 'local',
+    auth_id: 'root@pam!audited-token'
+  });
+```
+
+Storage endpoint caveat (v1):
+
+- `downloadContent` uses `GET /nodes/<node>/storage/<storage>/download?volume=<volid>`.
+- Proxmox behavior can vary by version/plugin; validate compatibility in your environment.
+
 ### Safe mutation flow behind explicit guard
 
 ```ts
@@ -504,6 +606,6 @@ Exports include:
 
 - config helpers: `LoadConfig`, `ValidateConfig`, `ResolveProfile`, `ResolveSecrets`, `BuildConfigDiagnostics`, `EmitStartupDiagnostics`, `ResolveConfigPath`
 - client: `ProxmoxClient`
-- services: `DatacenterService`, `ClusterService`, `NodeService`, `VmService`, `LxcService`, `AccessService`
+- services: `DatacenterService`, `ClusterService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
 - shared config/http/service types
 - typed error classes and HTTP error mapper

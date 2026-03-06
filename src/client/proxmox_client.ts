@@ -26,6 +26,7 @@ import { NodeService } from "../services/node_service";
 import { VmService } from "../services/vm_service";
 import { LxcService } from "../services/lxc_service";
 import { AccessService } from "../services/access_service";
+import { StorageService } from "../services/storage_service";
 import { ProxmoxError } from "../errors/proxmox_error";
 
 export interface proxmox_client_input_i {
@@ -61,6 +62,7 @@ export class ProxmoxClient {
   public readonly vm_service: VmService;
   public readonly lxc_service: LxcService;
   public readonly access_service: AccessService;
+  public readonly storage_service: StorageService;
 
   constructor(params: proxmox_client_input_i) {
     this.config = params.config;
@@ -121,6 +123,10 @@ export class ProxmoxClient {
     });
     this.access_service = new AccessService({
       request_client: this.request_client,
+    });
+    this.storage_service = new StorageService({
+      request_client: this.request_client,
+      access_service: this.access_service,
     });
   }
 

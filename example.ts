@@ -670,6 +670,15 @@ function ResolveLxcHelperTemplateReference(params: {
   return undefined;
 }
 
+function ResolveOptionalLxcDestroyContainerId(
+  raw_container_id: string | undefined
+): number | undefined {
+  return ResolveOptionalPositiveInteger({
+    raw_value: raw_container_id,
+    field_name: 'PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID'
+  });
+}
+
 function ResolvePreflightVmPath(params: {
   vm_records: proxmox_vm_record_i[];
   raw_vm_id: string | undefined;
@@ -1070,6 +1079,7 @@ async function Main(): Promise<void> {
     catalog_templates: template_catalog_inventory.data,
     fallback_storage: storage_id
   });
+  let lxc_helper_live_container_id: number | undefined;
   const lxc_helper_bridge = ResolveLxcHelperBridge(bridge_interfaces);
   const lxc_helper_disk_storage = ResolveLxcHelperDiskStorage({
     lxc_disk_storage_options,
@@ -1139,6 +1149,7 @@ async function Main(): Promise<void> {
             check_cpu: true,
             check_memory: true
           },
+          wait_for_task: true,
           dry_run: lxc_helper_dry_run,
           start_after_created: false
         });
@@ -1148,6 +1159,9 @@ async function Main(): Promise<void> {
       console.info(
         `[example] lxc_helper_preview node=${lxc_helper_preview.data.node_id} container_id=${lxc_helper_preview.data.container_id} template=${lxc_helper_template_reference} disk_storage=${lxc_helper_disk_storage} bridge=${lxc_helper_bridge}`
       );
+      if (lxc_helper_preview.data.dry_run !== true) {
+        lxc_helper_live_container_id = lxc_helper_container_id;
+      }
     } catch (error) {
       if (error instanceof ProxmoxError) {
         const status_code_suffix =
@@ -1169,6 +1183,81 @@ async function Main(): Promise<void> {
         LogErrorCauseChain(error);
       } else {
         throw error;
+      }
+    }
+  }
+
+  const run_lxc_destroy_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_LXC_DESTROY_RUN
+  );
+  if (!run_lxc_destroy_demo) {
+    console.info(
+      '[example] lxc_destroy_demo_skipped reason=PROXMOX_EXAMPLE_LXC_DESTROY_RUN_not_enabled'
+    );
+  } else if (!execute_mutations) {
+    console.info(
+      '[example] lxc_destroy_demo_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else {
+    const configured_destroy_container_id = ResolveOptionalLxcDestroyContainerId(
+      process.env.PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID
+    );
+    const destroy_container_id =
+      configured_destroy_container_id ?? lxc_helper_live_container_id;
+    if (destroy_container_id === undefined) {
+      console.info(
+        '[example] lxc_destroy_demo_skipped reason=no_destroy_container_id_available'
+      );
+    } else {
+      const destroy_dry_run = NormalizeBoolean(
+        process.env.PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN
+      );
+      console.info(
+        `[example] lxc_destroy_request container_id=${destroy_container_id} dry_run=${destroy_dry_run} ignore_not_found=true`
+      );
+      try {
+        const destroy_result = await proxmox_client.helpers.teardownAndDestroyLxcContainer({
+          node_id,
+          container_id: destroy_container_id,
+          dry_run: destroy_dry_run,
+          ignore_not_found: true,
+          wait_for_tasks: true
+        });
+        console.info(
+          `[example] lxc_destroy_result container_id=${destroy_result.data.container_id} stopped=${destroy_result.data.stopped} deleted=${destroy_result.data.deleted} ignored_not_found=${destroy_result.data.ignored_not_found} dry_run=${destroy_result.data.dry_run}`
+        );
+        if (destroy_result.data.stop_task?.task_id !== undefined) {
+          console.info(
+            `[example] lxc_destroy_stop_task task_id=${destroy_result.data.stop_task.task_id}`
+          );
+        }
+        if (destroy_result.data.delete_task?.task_id !== undefined) {
+          console.info(
+            `[example] lxc_destroy_delete_task task_id=${destroy_result.data.delete_task.task_id}`
+          );
+        }
+      } catch (error) {
+        if (error instanceof ProxmoxError) {
+          const status_code_suffix =
+            typeof error.status_code === 'number'
+              ? ` status_code=${error.status_code}`
+              : '';
+          const path_suffix =
+            typeof error.details?.path === 'string'
+              ? ` path=${error.details.path}`
+              : '';
+          console.error(
+            `[example] lxc_destroy_error code=${error.code} message=${error.message}${status_code_suffix}${path_suffix}`
+          );
+          if (error.details !== undefined) {
+            console.error(
+              `[example] lxc_destroy_error_details=${RenderUnknown(error.details)}`
+            );
+          }
+          LogErrorCauseChain(error);
+        } else {
+          throw error;
+        }
       }
     }
   }
@@ -1528,6 +1617,16 @@ async function Main(): Promise<void> {
     console.info(
       `[example] storage_delete_submitted storage=${storage_id} volume_id=${delete_volume_id} task_id=${delete_result.data.task_id}`
     );
+  }
+
+  const skip_vm_create_start = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_SKIP_VM_CREATE_START
+  );
+  if (skip_vm_create_start) {
+    console.info(
+      '[example] vm_create_start_skipped reason=PROXMOX_EXAMPLE_SKIP_VM_CREATE_START_enabled'
+    );
+    return;
   }
 
   const vm_id = ResolveVmId(process.env.PROXMOX_EXAMPLE_VM_ID);

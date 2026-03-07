@@ -29,6 +29,7 @@ import { LxcService } from "../services/lxc_service";
 import { NodeService } from "../services/node_service";
 import { DatacenterService } from "../services/datacenter_service";
 import { PoolService } from "../services/pool_service";
+import { AccessService } from "../services/access_service";
 
 type normalized_lxc_helper_general_t = {
   node_id: string;
@@ -120,6 +121,7 @@ export interface lxc_helper_input_i {
   node_service: NodeService;
   datacenter_service: DatacenterService;
   pool_service: PoolService;
+  access_service?: AccessService;
 }
 
 export class LxcHelper {
@@ -128,6 +130,7 @@ export class LxcHelper {
   public readonly node_service: NodeService;
   public readonly datacenter_service: DatacenterService;
   public readonly pool_service: PoolService;
+  public readonly access_service?: AccessService;
 
   constructor(params: lxc_helper_input_i) {
     this.request_client = params.request_client;
@@ -135,6 +138,7 @@ export class LxcHelper {
     this.node_service = params.node_service;
     this.datacenter_service = params.datacenter_service;
     this.pool_service = params.pool_service;
+    this.access_service = params.access_service;
   }
 
   public async createLxcContainer(

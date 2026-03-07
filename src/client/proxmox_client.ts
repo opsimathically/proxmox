@@ -29,6 +29,7 @@ import { AccessService } from "../services/access_service";
 import { StorageService } from "../services/storage_service";
 import { PoolService } from "../services/pool_service";
 import { LxcHelper } from "../helpers/lxc_helper";
+import { LxcDestroyHelper } from "../helpers/lxc_destroy_helper";
 import { ProxmoxHelpers } from "../helpers/proxmox_helpers";
 import { ProxmoxError } from "../errors/proxmox_error";
 
@@ -143,6 +144,11 @@ export class ProxmoxClient {
         node_service: this.node_service,
         datacenter_service: this.datacenter_service,
         pool_service: this.pool_service,
+        access_service: this.access_service,
+      }),
+      lxc_destroy_helper: new LxcDestroyHelper({
+        lxc_service: this.lxc_service,
+        access_service: this.access_service,
       }),
     });
   }

@@ -89,6 +89,7 @@ Design goals:
 ### `helpers` (`ProxmoxHelpers`)
 
 - `createLxcContainer` (high-level create/start orchestration with optional dry-run + preflight checks)
+- `teardownAndDestroyLxcContainer` (high-level stop/delete orchestration with optional dry-run + preflight checks)
 
 ### `access_service` (`AccessService`)
 
@@ -540,6 +541,32 @@ To actually create and optionally start the container, set `dry_run: false`.
 `start_after_created: true` triggers a follow-up `startContainer` call after create succeeds.
 If `general.add_to_ha: true`, the helper attempts HA registration via `/cluster/ha/resources` and returns a typed validation error when HA is unavailable in the current cluster context.
 
+### High-level LXC teardown-and-destroy helper
+
+```ts
+const destroy_operation = await client.helpers.teardownAndDestroyLxcContainer({
+  node_id: 'g75',
+  container_id: 9100,
+  stop_first: true,
+  wait_for_tasks: true,
+  ignore_not_found: true,
+  dry_run: false
+});
+
+console.log(
+  destroy_operation.data.stopped,
+  destroy_operation.data.deleted,
+  destroy_operation.data.ignored_not_found
+);
+```
+
+Notes:
+
+- `ignore_not_found: true` makes repeated destroy calls idempotent for already-absent containers.
+- `dry_run: true` returns planned destroy metadata without mutating state.
+- when `stop_first` is enabled, running containers are stopped before delete.
+- This operation is destructive and permanently removes the container.
+
 ### Storage content operations (backups/ISO/templates)
 
 `listCtTemplates` returns template files already present on the selected storage.
@@ -666,6 +693,10 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE=true` (both required to enable delete example)
 - `PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID` (optional container ID for helper dry-run preview, default: `9100`)
 - `PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME` (optional hostname for helper dry-run preview)
+- `PROXMOX_EXAMPLE_LXC_DESTROY_RUN` (set true to run helper destroy demo)
+- `PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID` (optional destroy target; falls back to helper-created container when available)
+- `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
+- `PROXMOX_EXAMPLE_SKIP_VM_CREATE_START` (optional skip for VM create/start mutation demo)
 
 ### Permission introspection (current identity)
 
@@ -805,7 +836,7 @@ Exports include:
 - config helpers: `LoadConfig`, `ValidateConfig`, `ResolveProfile`, `ResolveSecrets`, `BuildConfigDiagnostics`, `EmitStartupDiagnostics`, `ResolveConfigPath`
 - client: `ProxmoxClient`
 - services: `DatacenterService`, `ClusterService`, `PoolService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
-- helpers: `LxcHelper`, `ProxmoxHelpers`
+- helpers: `LxcHelper`, `LxcDestroyHelper`, `ProxmoxHelpers`
 - shared config/http/service types
 - typed error classes and HTTP error mapper
 

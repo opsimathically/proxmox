@@ -679,6 +679,43 @@ function ResolveOptionalLxcDestroyContainerId(
   });
 }
 
+function ResolveLxcBulkCount(raw_count: string | undefined): number {
+  const default_bulk_count = 10;
+  if (raw_count === undefined || raw_count.trim().length === 0) {
+    return default_bulk_count;
+  }
+  const parsed_count = Number.parseInt(raw_count.trim(), 10);
+  if (!Number.isInteger(parsed_count) || parsed_count <= 0) {
+    throw new Error('PROXMOX_EXAMPLE_LXC_BULK_COUNT must be a positive integer.');
+  }
+  return parsed_count;
+}
+
+function ResolveLxcBulkStartId(raw_start_id: string | undefined): number {
+  const default_bulk_start_id = 9400;
+  if (raw_start_id === undefined || raw_start_id.trim().length === 0) {
+    return default_bulk_start_id;
+  }
+  const parsed_start_id = Number.parseInt(raw_start_id.trim(), 10);
+  if (!Number.isInteger(parsed_start_id) || parsed_start_id <= 0) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_LXC_BULK_START_ID must be a positive integer.'
+    );
+  }
+  return parsed_start_id;
+}
+
+function BuildLxcBulkContainerIds(params: {
+  start_id: number;
+  count: number;
+}): number[] {
+  const container_ids: number[] = [];
+  for (let index = 0; index < params.count; index += 1) {
+    container_ids.push(params.start_id + index);
+  }
+  return container_ids;
+}
+
 function ResolvePreflightVmPath(params: {
   vm_records: proxmox_vm_record_i[];
   raw_vm_id: string | undefined;
@@ -1258,6 +1295,214 @@ async function Main(): Promise<void> {
         } else {
           throw error;
         }
+      }
+    }
+  }
+
+  const run_lxc_bulk_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_LXC_BULK_RUN
+  );
+  if (!run_lxc_bulk_demo) {
+    console.info(
+      '[example] lxc_bulk_demo_skipped reason=PROXMOX_EXAMPLE_LXC_BULK_RUN_not_enabled'
+    );
+  } else if (!execute_mutations) {
+    console.info(
+      '[example] lxc_bulk_demo_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else if (lxc_helper_template_reference === undefined) {
+    console.info(
+      '[example] lxc_bulk_demo_skipped reason=no_ct_template_reference_available'
+    );
+  } else if (lxc_helper_bridge === undefined) {
+    console.info('[example] lxc_bulk_demo_skipped reason=no_bridge_available');
+  } else {
+    const lxc_bulk_count = ResolveLxcBulkCount(
+      process.env.PROXMOX_EXAMPLE_LXC_BULK_COUNT
+    );
+    const lxc_bulk_start_id = ResolveLxcBulkStartId(
+      process.env.PROXMOX_EXAMPLE_LXC_BULK_START_ID
+    );
+    const lxc_bulk_dry_run = NormalizeBoolean(
+      process.env.PROXMOX_EXAMPLE_LXC_BULK_DRY_RUN
+    );
+    const lxc_bulk_destroy_run = NormalizeBoolean(
+      process.env.PROXMOX_EXAMPLE_LXC_BULK_DESTROY_RUN
+    );
+    const lxc_bulk_container_ids = BuildLxcBulkContainerIds({
+      start_id: lxc_bulk_start_id,
+      count: lxc_bulk_count
+    });
+
+    console.info(
+      `[example] lxc_bulk_create_request count=${lxc_bulk_count} start_id=${lxc_bulk_start_id} dry_run=${lxc_bulk_dry_run}`
+    );
+    try {
+      const bulk_create_result =
+        await proxmox_client.helpers.createLxcContainersBulk({
+          base_input: {
+            general: {
+              node_id,
+              container_id: lxc_bulk_container_ids[0],
+              hostname: `sdk-bulk-${lxc_bulk_container_ids[0]}.local`,
+              resource_pool:
+                selected_pool_id !== undefined && selected_pool_id !== 'unknown'
+                  ? selected_pool_id
+                  : undefined,
+              unprivileged_container: true,
+              nesting: true,
+              add_to_ha: false,
+              tags: ['example', 'bulk']
+            },
+            template: {
+              storage: storage_id,
+              template: lxc_helper_template_reference
+            },
+            disks: {
+              storage: lxc_helper_disk_storage,
+              disk_size_gib: 8
+            },
+            cpu: {
+              cores: 1,
+              cpu_units: 100
+            },
+            memory: {
+              memory_mib: 512,
+              swap_mib: 512
+            },
+            network: {
+              name: 'eth0',
+              bridge: lxc_helper_bridge,
+              ipv4_mode: 'dhcp',
+              ipv6_mode: 'dhcp'
+            },
+            preflight: {
+              enabled: true,
+              enforce: false,
+              check_cpu: true,
+              check_memory: true
+            },
+            start_after_created: false,
+            wait_for_task: true,
+            dry_run: lxc_bulk_dry_run
+          },
+          count: lxc_bulk_count,
+          container_id_list: lxc_bulk_container_ids,
+          hostname_strategy: {
+            template: 'sdk-bulk-{container_id}.local'
+          },
+          wait_for_tasks: true,
+          dry_run: lxc_bulk_dry_run,
+          continue_on_error: true,
+          concurrency_limit: 2
+        });
+      console.info(
+        `[example] lxc_bulk_create_summary requested=${bulk_create_result.data.summary.requested} attempted=${bulk_create_result.data.summary.attempted} succeeded=${bulk_create_result.data.summary.succeeded} failed=${bulk_create_result.data.summary.failed} skipped=${bulk_create_result.data.summary.skipped}`
+      );
+      for (const item of bulk_create_result.data.items) {
+        const create_task_id = item.create_task?.task_id ?? 'none';
+        const status_label = item.success ? 'ok' : 'error';
+        console.info(
+          `[example] lxc_bulk_create_item index=${item.index} container_id=${item.container_id} hostname=${item.hostname} status=${status_label} attempted=${item.attempted} skipped=${item.skipped} create_task_id=${create_task_id}`
+        );
+      }
+
+      if (!lxc_bulk_dry_run) {
+        const bulk_post_create_inventory =
+          await proxmox_client.lxc_service.listContainers({
+            node_id
+          });
+        const discovered_container_ids = new Set(
+          bulk_post_create_inventory.data
+            .map((record) => ResolveResourceId(record))
+            .filter((id) => id !== 'unknown')
+        );
+        const existing_count = lxc_bulk_container_ids.filter((container_id) =>
+          discovered_container_ids.has(String(container_id))
+        ).length;
+        console.info(
+          `[example] lxc_bulk_create_verify expected=${lxc_bulk_container_ids.length} found=${existing_count}`
+        );
+      } else {
+        console.info(
+          '[example] lxc_bulk_create_verify_skipped reason=dry_run_enabled'
+        );
+      }
+
+      if (!lxc_bulk_destroy_run) {
+        console.info(
+          '[example] lxc_bulk_destroy_skipped reason=PROXMOX_EXAMPLE_LXC_BULK_DESTROY_RUN_not_enabled'
+        );
+      } else {
+        console.info(
+          `[example] lxc_bulk_destroy_request count=${lxc_bulk_count} dry_run=${lxc_bulk_dry_run}`
+        );
+        const bulk_destroy_result =
+          await proxmox_client.helpers.teardownAndDestroyLxcContainersBulk({
+            node_id,
+            count: lxc_bulk_count,
+            container_id_list: lxc_bulk_container_ids,
+            stop_first: true,
+            ignore_not_found: true,
+            wait_for_tasks: true,
+            dry_run: lxc_bulk_dry_run,
+            continue_on_error: true,
+            concurrency_limit: 2
+          });
+        console.info(
+          `[example] lxc_bulk_destroy_summary requested=${bulk_destroy_result.data.summary.requested} attempted=${bulk_destroy_result.data.summary.attempted} succeeded=${bulk_destroy_result.data.summary.succeeded} failed=${bulk_destroy_result.data.summary.failed} skipped=${bulk_destroy_result.data.summary.skipped}`
+        );
+        for (const item of bulk_destroy_result.data.items) {
+          const delete_task_id = item.delete_task?.task_id ?? 'none';
+          const status_label = item.success ? 'ok' : 'error';
+          console.info(
+            `[example] lxc_bulk_destroy_item index=${item.index} container_id=${item.container_id} status=${status_label} attempted=${item.attempted} skipped=${item.skipped} deleted=${item.deleted ?? false} ignored_not_found=${item.ignored_not_found ?? false} delete_task_id=${delete_task_id}`
+          );
+        }
+
+        if (!lxc_bulk_dry_run) {
+          const bulk_post_destroy_inventory =
+            await proxmox_client.lxc_service.listContainers({
+              node_id
+            });
+          const remaining_container_ids = new Set(
+            bulk_post_destroy_inventory.data
+              .map((record) => ResolveResourceId(record))
+              .filter((id) => id !== 'unknown')
+          );
+          const remaining_count = lxc_bulk_container_ids.filter((container_id) =>
+            remaining_container_ids.has(String(container_id))
+          ).length;
+          console.info(
+            `[example] lxc_bulk_destroy_verify expected_removed=${lxc_bulk_container_ids.length} remaining=${remaining_count}`
+          );
+        } else {
+          console.info(
+            '[example] lxc_bulk_destroy_verify_skipped reason=dry_run_enabled'
+          );
+        }
+      }
+    } catch (error) {
+      if (error instanceof ProxmoxError) {
+        const status_code_suffix =
+          typeof error.status_code === 'number'
+            ? ` status_code=${error.status_code}`
+            : '';
+        const path_suffix =
+          typeof error.details?.path === 'string'
+            ? ` path=${error.details.path}`
+            : '';
+        console.error(
+          `[example] lxc_bulk_error code=${error.code} message=${error.message}${status_code_suffix}${path_suffix}`
+        );
+        if (error.details !== undefined) {
+          console.error(
+            `[example] lxc_bulk_error_details=${RenderUnknown(error.details)}`
+          );
+        }
+        LogErrorCauseChain(error);
+      } else {
+        throw error;
       }
     }
   }

@@ -49,3 +49,23 @@ Expanded `example.ts` to demonstrate diagnostics, inventories, permission checks
 12. **Test and Documentation Expansion**  
 Status: `done`  
 Expanded contract/core/helper tests and README coverage for capabilities, auth/TLS behavior, and practical usage examples.
+
+13. **Explicit LXC Destroy Helper Naming**  
+Status: `done`  
+Renamed teardown helper surface to explicit destructive naming (`teardownAndDestroyLxcContainer`) to make stop+delete intent unambiguous.
+
+14. **High-Level LXC Destroy Helper Flow**  
+Status: `done`  
+Implemented helper-driven LXC stop/halt + delete workflow with typed responses, dry-run support, not-found handling, and sanitized error context.
+
+15. **Bulk LXC Helper Operations**  
+Status: `done`  
+Added bulk create/destroy helper methods (`createLxcContainersBulk`, `teardownAndDestroyLxcContainersBulk`) with deterministic ID/hostname strategies, concurrency control, and aggregate per-item reporting.
+
+16. **Live Bulk Create/Destroy Verification (`example.ts`)**  
+Status: `done`  
+Validated end-to-end against throwaway Proxmox config: bulk create of 10 containers, existence verification, bulk destroy of same 10, and post-delete verification.
+
+17. **README Professionalization and Risk Notice**  
+Status: `done`  
+Updated README capability and example coverage to match implementation and added final `Project Status and Risk Notice` section for personal-use / own-risk clarity.

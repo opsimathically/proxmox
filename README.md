@@ -90,6 +90,8 @@ Design goals:
 
 - `createLxcContainer` (high-level create/start orchestration with optional dry-run + preflight checks)
 - `teardownAndDestroyLxcContainer` (high-level stop/delete orchestration with optional dry-run + preflight checks)
+- `createLxcContainersBulk` (high-level bulk create orchestration with deterministic ID/hostname generation)
+- `teardownAndDestroyLxcContainersBulk` (high-level bulk destroy orchestration with stop/delete flow)
 
 ### `access_service` (`AccessService`)
 
@@ -567,6 +569,62 @@ Notes:
 - when `stop_first` is enabled, running containers are stopped before delete.
 - This operation is destructive and permanently removes the container.
 
+### High-level bulk LXC helpers
+
+```ts
+const bulk_create = await client.helpers.createLxcContainersBulk({
+  base_input: {
+    general: {
+      node_id: 'g75',
+      container_id: 9400,
+      hostname: 'sdk-bulk.local'
+    },
+    template: {
+      storage: 'local',
+      template: 'local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst'
+    },
+    disks: {
+      storage: 'local-lvm',
+      disk_size_gib: 8
+    },
+    network: {
+      bridge: 'vmbr0',
+      ipv4_mode: 'dhcp',
+      ipv6_mode: 'dhcp'
+    }
+  },
+  count: 10,
+  container_id_start: 9400,
+  hostname_strategy: {
+    template: 'sdk-bulk-{container_id}.local'
+  },
+  wait_for_tasks: true,
+  continue_on_error: true,
+  dry_run: false
+});
+
+console.log(bulk_create.data.summary);
+```
+
+```ts
+const bulk_destroy = await client.helpers.teardownAndDestroyLxcContainersBulk({
+  node_id: 'g75',
+  container_id_list: [9400, 9401, 9402, 9403],
+  count: 4,
+  stop_first: true,
+  ignore_not_found: true,
+  wait_for_tasks: true,
+  continue_on_error: true,
+  dry_run: false
+});
+
+console.log(bulk_destroy.data.summary);
+```
+
+Bulk caution:
+
+- Bulk create/destroy operations can mutate many resources quickly. Use `dry_run: true` first and scope IDs carefully.
+
 ### Storage content operations (backups/ISO/templates)
 
 `listCtTemplates` returns template files already present on the selected storage.
@@ -696,6 +754,11 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_LXC_DESTROY_RUN` (set true to run helper destroy demo)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID` (optional destroy target; falls back to helper-created container when available)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
+- `PROXMOX_EXAMPLE_LXC_BULK_RUN` (set true to run bulk helper demo)
+- `PROXMOX_EXAMPLE_LXC_BULK_COUNT` (bulk batch size, default: `10`)
+- `PROXMOX_EXAMPLE_LXC_BULK_START_ID` (bulk start container ID, default: `9400`)
+- `PROXMOX_EXAMPLE_LXC_BULK_DRY_RUN` (optional bulk create/destroy dry-run toggle)
+- `PROXMOX_EXAMPLE_LXC_BULK_DESTROY_RUN` (set true to run bulk destroy after bulk create)
 - `PROXMOX_EXAMPLE_SKIP_VM_CREATE_START` (optional skip for VM create/start mutation demo)
 
 ### Permission introspection (current identity)

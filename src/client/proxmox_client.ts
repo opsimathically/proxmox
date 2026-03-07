@@ -29,6 +29,7 @@ import { AccessService } from "../services/access_service";
 import { StorageService } from "../services/storage_service";
 import { PoolService } from "../services/pool_service";
 import { LxcHelper } from "../helpers/lxc_helper";
+import { LxcBulkHelper } from "../helpers/lxc_bulk_helper";
 import { LxcDestroyHelper } from "../helpers/lxc_destroy_helper";
 import { ProxmoxHelpers } from "../helpers/proxmox_helpers";
 import { ProxmoxError } from "../errors/proxmox_error";
@@ -137,18 +138,24 @@ export class ProxmoxClient {
       request_client: this.request_client,
       access_service: this.access_service,
     });
+    const lxc_helper = new LxcHelper({
+      request_client: this.request_client,
+      lxc_service: this.lxc_service,
+      node_service: this.node_service,
+      datacenter_service: this.datacenter_service,
+      pool_service: this.pool_service,
+      access_service: this.access_service,
+    });
+    const lxc_destroy_helper = new LxcDestroyHelper({
+      lxc_service: this.lxc_service,
+      access_service: this.access_service,
+    });
     this.helpers = new ProxmoxHelpers({
-      lxc_helper: new LxcHelper({
-        request_client: this.request_client,
-        lxc_service: this.lxc_service,
-        node_service: this.node_service,
-        datacenter_service: this.datacenter_service,
-        pool_service: this.pool_service,
-        access_service: this.access_service,
-      }),
-      lxc_destroy_helper: new LxcDestroyHelper({
-        lxc_service: this.lxc_service,
-        access_service: this.access_service,
+      lxc_helper,
+      lxc_destroy_helper,
+      lxc_bulk_helper: new LxcBulkHelper({
+        lxc_helper,
+        lxc_destroy_helper,
       }),
     });
   }

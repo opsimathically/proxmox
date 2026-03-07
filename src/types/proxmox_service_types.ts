@@ -439,6 +439,44 @@ export interface proxmox_lxc_helper_destroy_input_i extends proxmox_task_options
   preflight?: proxmox_lxc_helper_destroy_preflight_input_i;
 }
 
+export interface proxmox_lxc_helper_bulk_hostname_strategy_i {
+  template?: string;
+  prefix?: string;
+  suffix?: string;
+  separator?: string;
+  start_index?: number;
+}
+
+export interface proxmox_lxc_helper_bulk_create_input_i {
+  base_input: proxmox_lxc_helper_create_input_i;
+  count: number;
+  container_id_start?: proxmox_lxc_id_t;
+  container_id_step?: number;
+  container_id_list?: proxmox_lxc_id_t[];
+  hostname_strategy?: proxmox_lxc_helper_bulk_hostname_strategy_i;
+  concurrency_limit?: number;
+  continue_on_error?: boolean;
+  wait_for_tasks?: boolean;
+  dry_run?: boolean;
+}
+
+export interface proxmox_lxc_helper_bulk_destroy_input_i extends proxmox_task_options_input_i {
+  node_id: string;
+  count?: number;
+  container_id_start?: proxmox_lxc_id_t;
+  container_id_step?: number;
+  container_id_list?: proxmox_lxc_id_t[];
+  stop_first?: boolean;
+  force_stop?: boolean;
+  purge?: boolean;
+  ignore_not_found?: boolean;
+  dry_run?: boolean;
+  wait_for_tasks?: boolean;
+  preflight?: proxmox_lxc_helper_destroy_preflight_input_i;
+  concurrency_limit?: number;
+  continue_on_error?: boolean;
+}
+
 export interface proxmox_task_wait_record_i {
   task_id: string;
   node_id: string;
@@ -805,6 +843,70 @@ export interface proxmox_lxc_helper_destroy_record_i {
   preflight: proxmox_lxc_helper_destroy_preflight_result_record_i;
 }
 
+export interface proxmox_lxc_helper_bulk_error_record_i {
+  code?: string;
+  message: string;
+  status_code?: number;
+  path?: string;
+  field?: string;
+}
+
+export interface proxmox_lxc_helper_bulk_summary_record_i {
+  requested: number;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+}
+
+export interface proxmox_lxc_helper_bulk_create_item_record_i {
+  index: number;
+  container_id: string;
+  hostname: string;
+  attempted: boolean;
+  skipped: boolean;
+  success: boolean;
+  dry_run: boolean;
+  create_task?: proxmox_lxc_task_result_t;
+  start_task?: proxmox_lxc_task_result_t;
+  preflight_summary?: proxmox_lxc_helper_preflight_result_record_i;
+  error?: proxmox_lxc_helper_bulk_error_record_i;
+}
+
+export interface proxmox_lxc_helper_bulk_create_record_i {
+  node_id: string;
+  dry_run: boolean;
+  continue_on_error: boolean;
+  concurrency_limit: number;
+  summary: proxmox_lxc_helper_bulk_summary_record_i;
+  items: proxmox_lxc_helper_bulk_create_item_record_i[];
+}
+
+export interface proxmox_lxc_helper_bulk_destroy_item_record_i {
+  index: number;
+  container_id: string;
+  attempted: boolean;
+  skipped: boolean;
+  success: boolean;
+  dry_run: boolean;
+  stopped?: boolean;
+  deleted?: boolean;
+  ignored_not_found?: boolean;
+  stop_task?: proxmox_lxc_task_result_t;
+  delete_task?: proxmox_lxc_task_result_t;
+  preflight_summary?: proxmox_lxc_helper_destroy_preflight_result_record_i;
+  error?: proxmox_lxc_helper_bulk_error_record_i;
+}
+
+export interface proxmox_lxc_helper_bulk_destroy_record_i {
+  node_id: string;
+  dry_run: boolean;
+  continue_on_error: boolean;
+  concurrency_limit: number;
+  summary: proxmox_lxc_helper_bulk_summary_record_i;
+  items: proxmox_lxc_helper_bulk_destroy_item_record_i[];
+}
+
 export type proxmox_datacenter_summary_t = proxmox_datacenter_summary_record_i;
 export type proxmox_datacenter_storage_list_t = proxmox_datacenter_storage_record_i[];
 export type proxmox_datacenter_version_t = proxmox_version_info_i;
@@ -871,12 +973,20 @@ export type proxmox_lxc_helper_create_t = proxmox_lxc_helper_create_record_i;
 export type proxmox_lxc_helper_destroy_preflight_check_t = proxmox_lxc_helper_destroy_preflight_check_record_i;
 export type proxmox_lxc_helper_destroy_preflight_result_t = proxmox_lxc_helper_destroy_preflight_result_record_i;
 export type proxmox_lxc_helper_destroy_t = proxmox_lxc_helper_destroy_record_i;
+export type proxmox_lxc_helper_bulk_error_t = proxmox_lxc_helper_bulk_error_record_i;
+export type proxmox_lxc_helper_bulk_summary_t = proxmox_lxc_helper_bulk_summary_record_i;
+export type proxmox_lxc_helper_bulk_create_item_t = proxmox_lxc_helper_bulk_create_item_record_i;
+export type proxmox_lxc_helper_bulk_create_t = proxmox_lxc_helper_bulk_create_record_i;
+export type proxmox_lxc_helper_bulk_destroy_item_t = proxmox_lxc_helper_bulk_destroy_item_record_i;
+export type proxmox_lxc_helper_bulk_destroy_t = proxmox_lxc_helper_bulk_destroy_record_i;
 export type proxmox_storage_content_list_response_t = proxmox_api_response_t<proxmox_storage_content_list_t>;
 export type proxmox_storage_template_catalog_response_t = proxmox_api_response_t<proxmox_storage_template_catalog_list_t>;
 export type proxmox_storage_task_response_t = proxmox_api_response_t<proxmox_storage_task_t>;
 export type proxmox_storage_download_response_t = proxmox_api_response_t<proxmox_storage_download_t>;
 export type proxmox_lxc_helper_create_response_t = proxmox_api_response_t<proxmox_lxc_helper_create_t>;
 export type proxmox_lxc_helper_destroy_response_t = proxmox_api_response_t<proxmox_lxc_helper_destroy_t>;
+export type proxmox_lxc_helper_bulk_create_response_t = proxmox_api_response_t<proxmox_lxc_helper_bulk_create_t>;
+export type proxmox_lxc_helper_bulk_destroy_response_t = proxmox_api_response_t<proxmox_lxc_helper_bulk_destroy_t>;
 
 export type proxmox_vm_record_t = proxmox_vm_record_i;
 export type proxmox_lxc_record_t = proxmox_lxc_record_i;

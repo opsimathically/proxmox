@@ -28,8 +28,14 @@ import { LxcService } from "../services/lxc_service";
 import { AccessService } from "../services/access_service";
 import { StorageService } from "../services/storage_service";
 import { PoolService } from "../services/pool_service";
+import { HaService } from "../services/ha_service";
+import { TaskService } from "../services/task_service";
+import { DrService } from "../services/dr_service";
+import { ClusterOrchestrationHelper } from "../helpers/cluster_orchestration_helper";
+import { NodeMaintenanceHelper } from "../helpers/node_maintenance_helper";
 import { LxcHelper } from "../helpers/lxc_helper";
 import { LxcBulkHelper } from "../helpers/lxc_bulk_helper";
+import { LxcClusterPreflightHelper } from "../helpers/lxc_cluster_preflight_helper";
 import { LxcDestroyHelper } from "../helpers/lxc_destroy_helper";
 import { ProxmoxHelpers } from "../helpers/proxmox_helpers";
 import { ProxmoxError } from "../errors/proxmox_error";
@@ -69,6 +75,9 @@ export class ProxmoxClient {
   public readonly access_service: AccessService;
   public readonly storage_service: StorageService;
   public readonly pool_service: PoolService;
+  public readonly ha_service: HaService;
+  public readonly task_service: TaskService;
+  public readonly dr_service: DrService;
   public readonly helpers: ProxmoxHelpers;
 
   constructor(params: proxmox_client_input_i) {
@@ -99,6 +108,21 @@ export class ProxmoxClient {
       request_client: this.request_client,
     });
     this.pool_service = new PoolService({
+      request_client: this.request_client,
+    });
+    this.ha_service = new HaService({
+      request_client: this.request_client,
+    });
+    this.task_service = new TaskService({
+      request_client: this.request_client,
+      task_poller: this.task_poller,
+      task_poll_options: {
+        interval_ms: this.profile.task_poller.poll_interval_ms,
+        timeout_ms: this.profile.task_poller.poll_timeout_ms,
+        max_poll_failures: this.profile.task_poller.max_poll_failures,
+      },
+    });
+    this.dr_service = new DrService({
       request_client: this.request_client,
     });
     this.node_service = new NodeService({
@@ -150,6 +174,23 @@ export class ProxmoxClient {
       lxc_service: this.lxc_service,
       access_service: this.access_service,
     });
+    const cluster_orchestration_helper = new ClusterOrchestrationHelper({
+      cluster_service: this.cluster_service,
+      node_service: this.node_service,
+      datacenter_service: this.datacenter_service,
+      access_service: this.access_service,
+      lxc_service: this.lxc_service,
+      vm_service: this.vm_service,
+    });
+    const node_maintenance_helper = new NodeMaintenanceHelper({
+      cluster_service: this.cluster_service,
+      datacenter_service: this.datacenter_service,
+      vm_service: this.vm_service,
+      lxc_service: this.lxc_service,
+      node_service: this.node_service,
+      cluster_orchestration_helper,
+    });
+
     this.helpers = new ProxmoxHelpers({
       lxc_helper,
       lxc_destroy_helper,
@@ -157,6 +198,14 @@ export class ProxmoxClient {
         lxc_helper,
         lxc_destroy_helper,
       }),
+      lxc_cluster_preflight_helper: new LxcClusterPreflightHelper({
+        cluster_service: this.cluster_service,
+        datacenter_service: this.datacenter_service,
+        access_service: this.access_service,
+        lxc_helper,
+      }),
+      cluster_orchestration_helper,
+      node_maintenance_helper,
     });
   }
 

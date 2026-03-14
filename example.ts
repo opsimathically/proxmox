@@ -81,6 +81,31 @@ function ResolvePreferredNodeId(params: {
   );
 }
 
+function ResolveNodeRecordId(node_record: proxmox_node_record_i): string | undefined {
+  const candidates = [
+    node_record.node,
+    node_record.name,
+    node_record.id
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
+function ResolveClusterNodeIds(node_records: proxmox_node_record_i[]): string[] {
+  const node_ids = new Set<string>();
+  for (const node_record of node_records) {
+    const node_id = ResolveNodeRecordId(node_record);
+    if (node_id !== undefined) {
+      node_ids.add(node_id);
+    }
+  }
+  return Array.from(node_ids.values());
+}
+
 function NormalizeBoolean(value: string | undefined): boolean {
   if (value === undefined) {
     return false;
@@ -170,6 +195,136 @@ function ResolveOptionalPositiveInteger(params: {
   return parsed_value;
 }
 
+function ResolvePlannerScoringMode(
+  raw_scoring_mode: string | undefined
+): 'balanced' | 'capacity_first' | 'strict' {
+  if (raw_scoring_mode === undefined || raw_scoring_mode.trim().length === 0) {
+    return 'balanced';
+  }
+  const normalized_scoring_mode = raw_scoring_mode.trim().toLowerCase();
+  if (
+    normalized_scoring_mode !== 'balanced' &&
+    normalized_scoring_mode !== 'capacity_first' &&
+    normalized_scoring_mode !== 'strict'
+  ) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_PLANNER_SCORING_MODE must be balanced, capacity_first, or strict.'
+    );
+  }
+  return normalized_scoring_mode;
+}
+
+function ResolveOptionalNodeId(params: {
+  raw_value: string | undefined;
+  field_name: string;
+}): string | undefined {
+  if (params.raw_value === undefined || params.raw_value.trim().length === 0) {
+    return undefined;
+  }
+  const node_id = params.raw_value.trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(node_id)) {
+    throw new Error(`${params.field_name} contains unsupported characters.`);
+  }
+  return node_id;
+}
+
+function ResolveOptionalNodeIdList(params: {
+  raw_value: string | undefined;
+  field_name: string;
+}): string[] | undefined {
+  if (params.raw_value === undefined || params.raw_value.trim().length === 0) {
+    return undefined;
+  }
+
+  const node_ids: string[] = [];
+  const dedupe_set = new Set<string>();
+  for (const raw_node_id of params.raw_value.split(',')) {
+    const node_id = ResolveOptionalNodeId({
+      raw_value: raw_node_id,
+      field_name: params.field_name
+    });
+    if (node_id === undefined) {
+      continue;
+    }
+    const dedupe_key = node_id.toLowerCase();
+    if (dedupe_set.has(dedupe_key)) {
+      continue;
+    }
+    dedupe_set.add(dedupe_key);
+    node_ids.push(node_id);
+  }
+  return node_ids.length > 0 ? node_ids : undefined;
+}
+
+function ResolveTaskWaitTargets(params: {
+  raw_value: string | undefined;
+  fallback_node_id: string;
+}): Array<{ node_id: string; task_id: string }> {
+  if (params.raw_value === undefined || params.raw_value.trim().length === 0) {
+    return [];
+  }
+
+  const targets: Array<{ node_id: string; task_id: string }> = [];
+  const dedupe_set = new Set<string>();
+  for (const raw_target of params.raw_value.split(',')) {
+    const trimmed_target = raw_target.trim();
+    if (trimmed_target.length === 0) {
+      continue;
+    }
+    const separator_index = trimmed_target.indexOf(':');
+    let node_id = params.fallback_node_id;
+    let task_id = trimmed_target;
+    if (separator_index > 0) {
+      const candidate_node_id = trimmed_target.slice(0, separator_index).trim();
+      const candidate_task_id = trimmed_target.slice(separator_index + 1).trim();
+      if (candidate_node_id.length > 0) {
+        node_id = candidate_node_id;
+      }
+      task_id = candidate_task_id;
+    }
+
+    if (!/^[A-Za-z0-9._-]+$/.test(node_id)) {
+      throw new Error(
+        'PROXMOX_EXAMPLE_TASK_WAIT_TARGETS node_id values contain unsupported characters.'
+      );
+    }
+    if (task_id.length === 0) {
+      throw new Error(
+        'PROXMOX_EXAMPLE_TASK_WAIT_TARGETS entries must include a task id.'
+      );
+    }
+
+    const dedupe_key = `${node_id.toLowerCase()}::${task_id}`;
+    if (dedupe_set.has(dedupe_key)) {
+      continue;
+    }
+    dedupe_set.add(dedupe_key);
+    targets.push({
+      node_id,
+      task_id
+    });
+  }
+
+  return targets;
+}
+
+function ResolveTemplateStorageIdFromReference(
+  template_reference: string | undefined
+): string | undefined {
+  if (
+    template_reference === undefined ||
+    template_reference.trim().length === 0
+  ) {
+    return undefined;
+  }
+  const separator_index = template_reference.indexOf(':');
+  if (separator_index <= 0) {
+    return undefined;
+  }
+  const storage_id = template_reference.slice(0, separator_index).trim();
+  return storage_id.length > 0 ? storage_id : undefined;
+}
+
 function LogTaskMetadata(params: {
   label: string;
   task_id: string;
@@ -252,6 +407,13 @@ function ResolveResourceId(record: {
     return record.id.trim();
   }
   return 'unknown';
+}
+
+function ResolveOptionalResourceNumericId(raw_resource_id: string): number | undefined {
+  if (!/^[1-9][0-9]*$/.test(raw_resource_id.trim())) {
+    return undefined;
+  }
+  return Number.parseInt(raw_resource_id.trim(), 10);
 }
 
 function ResolveResourceName(record: { name?: string }): string {
@@ -686,7 +848,9 @@ function ResolveLxcBulkCount(raw_count: string | undefined): number {
   }
   const parsed_count = Number.parseInt(raw_count.trim(), 10);
   if (!Number.isInteger(parsed_count) || parsed_count <= 0) {
-    throw new Error('PROXMOX_EXAMPLE_LXC_BULK_COUNT must be a positive integer.');
+    throw new Error(
+      'PROXMOX_EXAMPLE_LXC_BULK_COUNT must be a positive integer.'
+    );
   }
   return parsed_count;
 }
@@ -831,11 +995,46 @@ async function Main(): Promise<void> {
     console.info(`[example] node=${node_label} status=${node_status}`);
   }
 
-  const node_id = ResolvePreferredNodeId({
+  const configured_node_ids = new Set(
+    proxmox_client.cluster.nodes.map((cluster_node) => cluster_node.id)
+  );
+  let node_id = ResolvePreferredNodeId({
     provided_node_id: process.env.PROXMOX_EXAMPLE_NODE_ID,
     node_records
   });
+  if (!configured_node_ids.has(node_id)) {
+    const fallback_configured_node_id =
+      proxmox_client.cluster.default_node ?? proxmox_client.cluster.nodes[0]?.id;
+    if (fallback_configured_node_id !== undefined) {
+      console.info(
+        `[example] selected_node_override source=configured_cluster_nodes previous=${node_id} selected=${fallback_configured_node_id}`
+      );
+      node_id = fallback_configured_node_id;
+    }
+  }
   console.info(`[example] selected_node=${node_id}`);
+  const discovered_cluster_node_ids = ResolveClusterNodeIds(node_records);
+  const configured_cluster_node_ids = Array.from(configured_node_ids.values());
+  const cluster_candidate_node_ids =
+    configured_cluster_node_ids.length > 0
+      ? configured_cluster_node_ids
+      : discovered_cluster_node_ids;
+  console.info(
+    `[example] cluster_discovered_nodes=${discovered_cluster_node_ids.length} ids=${discovered_cluster_node_ids.join(',')}`
+  );
+  console.info(
+    `[example] cluster_configured_nodes=${configured_cluster_node_ids.length} ids=${configured_cluster_node_ids.join(',')}`
+  );
+  console.info(
+    `[example] cluster_candidate_nodes=${cluster_candidate_node_ids.length} ids=${cluster_candidate_node_ids.join(',')}`
+  );
+
+  const next_lxc_id_response = await proxmox_client.cluster_service.allocateNextId({
+    resource_type: 'lxc'
+  });
+  console.info(
+    `[example] cluster_next_lxc_id value=${next_lxc_id_response.data.next_id} source=${next_lxc_id_response.data.source}`
+  );
 
   const network_interfaces_response =
     await proxmox_client.node_service.listNetworkInterfaces({
@@ -1122,6 +1321,82 @@ async function Main(): Promise<void> {
     lxc_disk_storage_options,
     fallback_storage: storage_id
   });
+  const vm_helper_disk_storage = ResolveLxcHelperDiskStorage({
+    lxc_disk_storage_options: vm_disk_storage_options,
+    fallback_storage: storage_id
+  });
+  const planner_scoring_mode = ResolvePlannerScoringMode(
+    process.env.PROXMOX_EXAMPLE_PLANNER_SCORING_MODE
+  );
+  const planner_required_pool_id =
+    selected_pool_id !== undefined && selected_pool_id !== 'unknown'
+      ? selected_pool_id
+      : undefined;
+  const planner_template_storage_id = ResolveTemplateStorageIdFromReference(
+    lxc_helper_template_reference
+  );
+
+  try {
+    const lxc_placement_plan = await proxmox_client.helpers.planLxcPlacement({
+      required_storage_id: lxc_helper_disk_storage,
+      template_storage_id: planner_template_storage_id,
+      required_bridge: lxc_helper_bridge,
+      requested_cores: requested_cores_for_preflight,
+      requested_memory_bytes: requested_memory_bytes_for_preflight,
+      candidate_node_ids: cluster_candidate_node_ids,
+      required_pool_id: planner_required_pool_id,
+      scoring_mode: planner_scoring_mode,
+      strict_permissions: false
+    });
+    console.info(
+      `[example] placement_lxc_plan scoring=${lxc_placement_plan.data.scoring_mode} checked=${lxc_placement_plan.data.checked_node_count} allowed=${lxc_placement_plan.data.allowed_node_count} denied=${lxc_placement_plan.data.denied_node_count} recommended_node=${lxc_placement_plan.data.recommended_node_id ?? 'none'}`
+    );
+    for (const candidate of lxc_placement_plan.data.candidates) {
+      console.info(
+        `[example] placement_lxc_candidate node=${candidate.node_id} allowed=${candidate.allowed} score=${candidate.score} failed_required_checks=${candidate.failed_required_checks}`
+      );
+    }
+  } catch (error) {
+    if (error instanceof ProxmoxError) {
+      console.error(
+        `[example] placement_lxc_error code=${error.code} message=${error.message}`
+      );
+      LogErrorCauseChain(error);
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    const vm_placement_plan = await proxmox_client.helpers.planVmPlacement({
+      required_storage_id: vm_helper_disk_storage,
+      required_bridge: lxc_helper_bridge,
+      requested_cores: requested_cores_for_preflight,
+      requested_memory_bytes: requested_memory_bytes_for_preflight,
+      candidate_node_ids: cluster_candidate_node_ids,
+      required_pool_id: planner_required_pool_id,
+      scoring_mode: planner_scoring_mode,
+      strict_permissions: false
+    });
+    console.info(
+      `[example] placement_vm_plan scoring=${vm_placement_plan.data.scoring_mode} checked=${vm_placement_plan.data.checked_node_count} allowed=${vm_placement_plan.data.allowed_node_count} denied=${vm_placement_plan.data.denied_node_count} recommended_node=${vm_placement_plan.data.recommended_node_id ?? 'none'}`
+    );
+    for (const candidate of vm_placement_plan.data.candidates) {
+      console.info(
+        `[example] placement_vm_candidate node=${candidate.node_id} allowed=${candidate.allowed} score=${candidate.score} failed_required_checks=${candidate.failed_required_checks}`
+      );
+    }
+  } catch (error) {
+    if (error instanceof ProxmoxError) {
+      console.error(
+        `[example] placement_vm_error code=${error.code} message=${error.message}`
+      );
+      LogErrorCauseChain(error);
+    } else {
+      throw error;
+    }
+  }
+
   if (lxc_helper_template_reference === undefined) {
     console.info(
       '[example] lxc_helper_preview_skipped reason=no_ct_template_reference_available'
@@ -1135,57 +1410,107 @@ async function Main(): Promise<void> {
       process.env.PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID
     );
     const lxc_helper_dry_run = !execute_mutations;
+    const cluster_preflight_strict_permissions = NormalizeBoolean(
+      process.env.PROXMOX_EXAMPLE_LXC_CLUSTER_PREFLIGHT_STRICT_PERMISSIONS
+    );
     const lxc_helper_hostname = ResolveLxcHelperHostname({
       raw_hostname: process.env.PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME,
       container_id: lxc_helper_container_id
     });
+    const lxc_cluster_preflight_input = {
+      general: {
+        node_id,
+        container_id: lxc_helper_container_id,
+        hostname: lxc_helper_hostname,
+        resource_pool:
+          selected_pool_id !== undefined && selected_pool_id !== 'unknown'
+            ? selected_pool_id
+            : undefined,
+        unprivileged_container: true,
+        nesting: true,
+        add_to_ha: false,
+        tags: ['example', 'helper']
+      },
+      template: {
+        storage: storage_id,
+        template: lxc_helper_template_reference
+      },
+      disks: {
+        storage: lxc_helper_disk_storage,
+        disk_size_gib: 8
+      },
+      cpu: {
+        cores: 1,
+        cpu_units: 100
+      },
+      memory: {
+        memory_mib: 512,
+        swap_mib: 512
+      },
+      network: {
+        name: 'eth0',
+        bridge: lxc_helper_bridge,
+        ipv4_mode: 'dhcp',
+        ipv6_mode: 'dhcp'
+      },
+      preflight: {
+        enabled: true,
+        enforce: false,
+        check_cpu: true,
+        check_memory: true
+      }
+    };
     console.info(
       `[example] lxc_helper_request node=${node_id} container_id=${lxc_helper_container_id} template=${lxc_helper_template_reference} disk_storage=${lxc_helper_disk_storage} bridge=${lxc_helper_bridge} dry_run=${lxc_helper_dry_run} start_after_created=false`
     );
     try {
+      const cluster_storage_compatibility =
+        await proxmox_client.cluster_service.checkStorageCompatibility({
+          node_ids: cluster_candidate_node_ids,
+          required_content: 'rootdir',
+          storage_id: lxc_helper_disk_storage
+        });
+      console.info(
+        `[example] cluster_storage_rootdir_compatibility checked=${cluster_storage_compatibility.data.checked_node_count} compatible=${cluster_storage_compatibility.data.compatible_nodes.length} incompatible=${cluster_storage_compatibility.data.incompatible_nodes.length}`
+      );
+      for (const node_compatibility of cluster_storage_compatibility.data.nodes) {
+        console.info(
+          `[example] cluster_storage_rootdir_node node=${node_compatibility.node_id} compatible=${node_compatibility.compatible} reason=${node_compatibility.reason}`
+        );
+      }
+
+      const cluster_bridge_compatibility =
+        await proxmox_client.cluster_service.checkBridgeCompatibility({
+          node_ids: cluster_candidate_node_ids,
+          bridge: lxc_helper_bridge
+        });
+      console.info(
+        `[example] cluster_bridge_compatibility checked=${cluster_bridge_compatibility.data.checked_node_count} compatible=${cluster_bridge_compatibility.data.compatible_nodes.length} incompatible=${cluster_bridge_compatibility.data.incompatible_nodes.length}`
+      );
+      for (const node_bridge of cluster_bridge_compatibility.data.nodes) {
+        console.info(
+          `[example] cluster_bridge_node node=${node_bridge.node_id} compatible=${node_bridge.compatible} reason=${node_bridge.reason} bridge_found=${node_bridge.bridge_found}`
+        );
+      }
+
+      const cluster_lxc_preflight =
+        await proxmox_client.helpers.preflightLxcCreateCluster({
+          create_input: lxc_cluster_preflight_input,
+          candidate_node_ids: cluster_candidate_node_ids,
+          strict_permissions: cluster_preflight_strict_permissions
+        });
+      console.info(
+        `[example] cluster_lxc_preflight checked=${cluster_lxc_preflight.data.checked_node_count} allowed=${cluster_lxc_preflight.data.allowed_node_count} denied=${cluster_lxc_preflight.data.denied_node_count} strict_permissions=${cluster_lxc_preflight.data.strict_permissions} recommended_node=${cluster_lxc_preflight.data.recommended_node_id ?? 'none'}`
+      );
+      for (const candidate of cluster_lxc_preflight.data.candidates) {
+        console.info(
+          `[example] cluster_lxc_preflight_candidate node=${candidate.node_id} allowed=${candidate.allowed} score=${candidate.score} failed_required_checks=${candidate.failed_required_checks}`
+        );
+      }
+
       const lxc_helper_preview =
         await proxmox_client.helpers.createLxcContainer({
-          general: {
-            node_id,
-            container_id: lxc_helper_container_id,
-            hostname: lxc_helper_hostname,
-            resource_pool:
-              selected_pool_id !== undefined && selected_pool_id !== 'unknown'
-                ? selected_pool_id
-                : undefined,
-            unprivileged_container: true,
-            nesting: true,
-            add_to_ha: false,
-            tags: ['example', 'helper']
-          },
-          template: {
-            storage: storage_id,
-            template: lxc_helper_template_reference
-          },
-          disks: {
-            storage: lxc_helper_disk_storage,
-            disk_size_gib: 8
-          },
-          cpu: {
-            cores: 1,
-            cpu_units: 100
-          },
-          memory: {
-            memory_mib: 512,
-            swap_mib: 512
-          },
-          network: {
-            name: 'eth0',
-            bridge: lxc_helper_bridge,
-            ipv4_mode: 'dhcp',
-            ipv6_mode: 'dhcp'
-          },
-          preflight: {
-            enabled: true,
-            enforce: false,
-            check_cpu: true,
-            check_memory: true
-          },
+          ...lxc_cluster_preflight_input,
           wait_for_task: true,
           dry_run: lxc_helper_dry_run,
           start_after_created: false
@@ -1236,9 +1561,10 @@ async function Main(): Promise<void> {
       '[example] lxc_destroy_demo_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
     );
   } else {
-    const configured_destroy_container_id = ResolveOptionalLxcDestroyContainerId(
-      process.env.PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID
-    );
+    const configured_destroy_container_id =
+      ResolveOptionalLxcDestroyContainerId(
+        process.env.PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID
+      );
     const destroy_container_id =
       configured_destroy_container_id ?? lxc_helper_live_container_id;
     if (destroy_container_id === undefined) {
@@ -1253,13 +1579,14 @@ async function Main(): Promise<void> {
         `[example] lxc_destroy_request container_id=${destroy_container_id} dry_run=${destroy_dry_run} ignore_not_found=true`
       );
       try {
-        const destroy_result = await proxmox_client.helpers.teardownAndDestroyLxcContainer({
-          node_id,
-          container_id: destroy_container_id,
-          dry_run: destroy_dry_run,
-          ignore_not_found: true,
-          wait_for_tasks: true
-        });
+        const destroy_result =
+          await proxmox_client.helpers.teardownAndDestroyLxcContainer({
+            node_id,
+            container_id: destroy_container_id,
+            dry_run: destroy_dry_run,
+            ignore_not_found: true,
+            wait_for_tasks: true
+          });
         console.info(
           `[example] lxc_destroy_result container_id=${destroy_result.data.container_id} stopped=${destroy_result.data.stopped} deleted=${destroy_result.data.deleted} ignored_not_found=${destroy_result.data.ignored_not_found} dry_run=${destroy_result.data.dry_run}`
         );
@@ -1470,8 +1797,8 @@ async function Main(): Promise<void> {
               .map((record) => ResolveResourceId(record))
               .filter((id) => id !== 'unknown')
           );
-          const remaining_count = lxc_bulk_container_ids.filter((container_id) =>
-            remaining_container_ids.has(String(container_id))
+          const remaining_count = lxc_bulk_container_ids.filter(
+            (container_id) => remaining_container_ids.has(String(container_id))
           ).length;
           console.info(
             `[example] lxc_bulk_destroy_verify expected_removed=${lxc_bulk_container_ids.length} remaining=${remaining_count}`
@@ -1498,6 +1825,418 @@ async function Main(): Promise<void> {
         if (error.details !== undefined) {
           console.error(
             `[example] lxc_bulk_error_details=${RenderUnknown(error.details)}`
+          );
+        }
+        LogErrorCauseChain(error);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const run_cluster_lxc_migration_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_RUN
+  );
+  const run_cluster_vm_migration_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_RUN
+  );
+  const migration_target_node_id = ResolveOptionalNodeId({
+    raw_value: process.env.PROXMOX_EXAMPLE_CLUSTER_MIGRATION_TARGET_NODE_ID,
+    field_name: 'PROXMOX_EXAMPLE_CLUSTER_MIGRATION_TARGET_NODE_ID'
+  });
+
+  if (!run_cluster_lxc_migration_demo) {
+    console.info(
+      '[example] cluster_lxc_migration_skipped reason=PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_RUN_not_enabled'
+    );
+  } else if (!execute_mutations) {
+    console.info(
+      '[example] cluster_lxc_migration_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else if (migration_target_node_id === undefined) {
+    console.info(
+      '[example] cluster_lxc_migration_skipped reason=PROXMOX_EXAMPLE_CLUSTER_MIGRATION_TARGET_NODE_ID_not_set'
+    );
+  } else {
+    const configured_lxc_migration_id = ResolveOptionalPositiveInteger({
+      raw_value: process.env.PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_ID,
+      field_name: 'PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_ID'
+    });
+    const discovered_lxc_migration_id =
+      lxc_records.length > 0
+        ? ResolveOptionalResourceNumericId(ResolveResourceId(lxc_records[0]))
+        : undefined;
+    const lxc_migration_id =
+      configured_lxc_migration_id ?? discovered_lxc_migration_id;
+    if (lxc_migration_id === undefined) {
+      console.info(
+        '[example] cluster_lxc_migration_skipped reason=no_lxc_id_available'
+      );
+    } else {
+      console.info(
+        `[example] cluster_lxc_migration_request container_id=${lxc_migration_id} source_node=${node_id} target_node=${migration_target_node_id} required_storage=${lxc_helper_disk_storage} required_bridge=${lxc_helper_bridge ?? 'none'}`
+      );
+      try {
+        const migration_result =
+          await proxmox_client.helpers.migrateLxcWithPreflight({
+            node_id,
+            container_id: lxc_migration_id,
+            target_node_id: migration_target_node_id,
+            required_storage_id: lxc_helper_disk_storage,
+            required_bridge: lxc_helper_bridge,
+            requested_cores: requested_cores_for_preflight,
+            requested_memory_bytes: requested_memory_bytes_for_preflight,
+            migrate_volumes: true,
+            wait_for_task: true,
+            scoring_mode: planner_scoring_mode
+          });
+        console.info(
+          `[example] cluster_lxc_migration_result container_id=${migration_result.data.container_id} allowed=${migration_result.data.preflight.allowed} reason=${migration_result.data.preflight.reason} task_id=${migration_result.data.migration_task?.task_id ?? 'none'}`
+        );
+      } catch (error) {
+        if (error instanceof ProxmoxError) {
+          console.error(
+            `[example] cluster_lxc_migration_error code=${error.code} message=${error.message}`
+          );
+          if (error.details !== undefined) {
+            console.error(
+              `[example] cluster_lxc_migration_error_details=${RenderUnknown(error.details)}`
+            );
+          }
+          LogErrorCauseChain(error);
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  if (!run_cluster_vm_migration_demo) {
+    console.info(
+      '[example] cluster_vm_migration_skipped reason=PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_RUN_not_enabled'
+    );
+  } else if (!execute_mutations) {
+    console.info(
+      '[example] cluster_vm_migration_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else if (migration_target_node_id === undefined) {
+    console.info(
+      '[example] cluster_vm_migration_skipped reason=PROXMOX_EXAMPLE_CLUSTER_MIGRATION_TARGET_NODE_ID_not_set'
+    );
+  } else {
+    const configured_vm_migration_id = ResolveOptionalPositiveInteger({
+      raw_value: process.env.PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_ID,
+      field_name: 'PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_ID'
+    });
+    const discovered_vm_migration_id =
+      vm_records.length > 0
+        ? ResolveOptionalResourceNumericId(ResolveResourceId(vm_records[0]))
+        : undefined;
+    const vm_migration_id = configured_vm_migration_id ?? discovered_vm_migration_id;
+    if (vm_migration_id === undefined) {
+      console.info(
+        '[example] cluster_vm_migration_skipped reason=no_vm_id_available'
+      );
+    } else {
+      console.info(
+        `[example] cluster_vm_migration_request vm_id=${vm_migration_id} source_node=${node_id} target_node=${migration_target_node_id} required_storage=${vm_helper_disk_storage} required_bridge=${lxc_helper_bridge ?? 'none'}`
+      );
+      try {
+        const migration_result =
+          await proxmox_client.helpers.migrateVmWithPreflight({
+            node_id,
+            vm_id: vm_migration_id,
+            target_node_id: migration_target_node_id,
+            required_storage_id: vm_helper_disk_storage,
+            required_bridge: lxc_helper_bridge,
+            requested_cores: requested_cores_for_preflight,
+            requested_memory_bytes: requested_memory_bytes_for_preflight,
+            online: true,
+            force: false,
+            wait_for_task: true,
+            scoring_mode: planner_scoring_mode
+          });
+        console.info(
+          `[example] cluster_vm_migration_result vm_id=${migration_result.data.vm_id} allowed=${migration_result.data.preflight.allowed} reason=${migration_result.data.preflight.reason} task_id=${migration_result.data.migration_task?.task_id ?? 'none'}`
+        );
+      } catch (error) {
+        if (error instanceof ProxmoxError) {
+          console.error(
+            `[example] cluster_vm_migration_error code=${error.code} message=${error.message}`
+          );
+          if (error.details !== undefined) {
+            console.error(
+              `[example] cluster_vm_migration_error_details=${RenderUnknown(error.details)}`
+            );
+          }
+          LogErrorCauseChain(error);
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  const run_ha_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_CLUSTER_HA_RUN
+  );
+  if (!run_ha_demo) {
+    console.info(
+      '[example] cluster_ha_demo_skipped reason=PROXMOX_EXAMPLE_CLUSTER_HA_RUN_not_enabled'
+    );
+  } else if (!execute_mutations) {
+    console.info(
+      '[example] cluster_ha_demo_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else {
+    try {
+      const ha_resources = await proxmox_client.ha_service.listResources();
+      console.info(`[example] ha_resources_count=${ha_resources.data.length}`);
+      for (const resource of ha_resources.data) {
+        console.info(
+          `[example] ha_resource sid=${resource.sid} state=${resource.state ?? 'unknown'} group=${resource.group ?? 'unknown'} status=${resource.status ?? 'unknown'}`
+        );
+      }
+
+      const ha_groups = await proxmox_client.ha_service.listGroups();
+      console.info(`[example] ha_groups_count=${ha_groups.data.length}`);
+      for (const group of ha_groups.data) {
+        console.info(
+          `[example] ha_group group=${group.group} nodes=${group.nodes ?? 'unknown'} restricted=${group.restricted ?? false}`
+        );
+      }
+
+      const ha_add_sid =
+        process.env.PROXMOX_EXAMPLE_CLUSTER_HA_ADD_SID?.trim() || undefined;
+      if (ha_add_sid === undefined) {
+        console.info(
+          '[example] ha_add_skipped reason=PROXMOX_EXAMPLE_CLUSTER_HA_ADD_SID_not_set'
+        );
+      } else {
+        const add_result = await proxmox_client.ha_service.addResource({
+          sid: ha_add_sid
+        });
+        console.info(
+          `[example] ha_add_result sid=${ha_add_sid} task_id=${add_result.data.task_id}`
+        );
+      }
+
+      const ha_update_sid =
+        process.env.PROXMOX_EXAMPLE_CLUSTER_HA_UPDATE_SID?.trim() || undefined;
+      if (ha_update_sid === undefined) {
+        console.info(
+          '[example] ha_update_skipped reason=PROXMOX_EXAMPLE_CLUSTER_HA_UPDATE_SID_not_set'
+        );
+      } else {
+        const update_result = await proxmox_client.ha_service.updateResource({
+          sid: ha_update_sid,
+          state: process.env.PROXMOX_EXAMPLE_CLUSTER_HA_UPDATE_STATE?.trim() || 'started'
+        });
+        console.info(
+          `[example] ha_update_result sid=${ha_update_sid} task_id=${update_result.data.task_id}`
+        );
+      }
+
+      const ha_remove_sid =
+        process.env.PROXMOX_EXAMPLE_CLUSTER_HA_REMOVE_SID?.trim() || undefined;
+      if (ha_remove_sid === undefined) {
+        console.info(
+          '[example] ha_remove_skipped reason=PROXMOX_EXAMPLE_CLUSTER_HA_REMOVE_SID_not_set'
+        );
+      } else {
+        const remove_result = await proxmox_client.ha_service.removeResource({
+          sid: ha_remove_sid
+        });
+        console.info(
+          `[example] ha_remove_result sid=${ha_remove_sid} task_id=${remove_result.data.task_id}`
+        );
+      }
+    } catch (error) {
+      if (error instanceof ProxmoxError) {
+        console.error(
+          `[example] cluster_ha_error code=${error.code} message=${error.message}`
+        );
+        if (error.details !== undefined) {
+          console.error(
+            `[example] cluster_ha_error_details=${RenderUnknown(error.details)}`
+          );
+        }
+        LogErrorCauseChain(error);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const dr_replication = await proxmox_client.dr_service.discoverReplicationCapabilities({
+    node_id
+  });
+  console.info(
+    `[example] dr_replication_supported=${dr_replication.data.supported} cluster_jobs=${dr_replication.data.cluster_jobs_count} node_jobs=${dr_replication.data.node_jobs_count}`
+  );
+  for (const check_record of dr_replication.data.checks) {
+    console.info(
+      `[example] dr_replication_check capability=${check_record.capability} supported=${check_record.supported} reason=${check_record.reason} status_code=${check_record.status_code ?? 'unknown'}`
+    );
+  }
+
+  const dr_backup = await proxmox_client.dr_service.discoverBackupCapabilities({
+    node_id
+  });
+  console.info(
+    `[example] dr_backup_supported=${dr_backup.data.supported} schedule_count=${dr_backup.data.backup_schedule_count} backup_storage_count=${dr_backup.data.backup_storage_count} backup_storage_ids=${dr_backup.data.backup_storage_ids.join(',')}`
+  );
+  for (const check_record of dr_backup.data.checks) {
+    console.info(
+      `[example] dr_backup_check capability=${check_record.capability} supported=${check_record.supported} reason=${check_record.reason} status_code=${check_record.status_code ?? 'unknown'}`
+    );
+  }
+
+  const dr_readiness = await proxmox_client.dr_service.checkDrReadiness({
+    node_id,
+    require_backup_storage: true,
+    minimum_backup_storage_count: 1
+  });
+  console.info(
+    `[example] dr_readiness_allowed=${dr_readiness.data.allowed} failed_checks=${dr_readiness.data.failed_checks}`
+  );
+  for (const check_record of dr_readiness.data.checks) {
+    console.info(
+      `[example] dr_readiness_check check=${check_record.check} passed=${check_record.passed} reason=${check_record.reason}`
+    );
+  }
+
+  const maintenance_target_node_ids = cluster_candidate_node_ids.filter(
+    (cluster_node_id) => cluster_node_id.toLowerCase() !== node_id.toLowerCase()
+  );
+  if (maintenance_target_node_ids.length === 0) {
+    console.info(
+      '[example] node_maintenance_plan_skipped reason=no_target_nodes_available'
+    );
+  } else {
+    const maintenance_plan =
+      await proxmox_client.helpers.prepareNodeMaintenance({
+        node_id,
+        target_node_ids: maintenance_target_node_ids,
+        include_stopped: false,
+        scoring_mode: planner_scoring_mode
+      });
+    console.info(
+      `[example] node_maintenance_plan source_node=${maintenance_plan.data.source_node_id} targets=${maintenance_plan.data.target_node_ids.join(',')} checked=${maintenance_plan.data.checked_resource_count} selected=${maintenance_plan.data.selected_resource_count} blocked=${maintenance_plan.data.blocked_resource_count} candidates=${maintenance_plan.data.migration_candidate_count}`
+    );
+    for (const resource_record of maintenance_plan.data.resources) {
+      console.info(
+        `[example] node_maintenance_resource type=${resource_record.resource_type} id=${resource_record.resource_id} selected=${resource_record.selected_for_drain} blocked=${resource_record.blocked} reason=${resource_record.reason} target=${resource_record.target_node_id ?? 'none'}`
+      );
+    }
+  }
+
+  const run_node_drain_demo = NormalizeBoolean(
+    process.env.PROXMOX_EXAMPLE_NODE_DRAIN_RUN
+  );
+  const node_drain_dry_run =
+    process.env.PROXMOX_EXAMPLE_NODE_DRAIN_DRY_RUN === undefined
+      ? true
+      : NormalizeBoolean(process.env.PROXMOX_EXAMPLE_NODE_DRAIN_DRY_RUN);
+  const node_drain_target_node_ids =
+    ResolveOptionalNodeIdList({
+      raw_value: process.env.PROXMOX_EXAMPLE_NODE_DRAIN_TARGET_NODE_IDS,
+      field_name: 'PROXMOX_EXAMPLE_NODE_DRAIN_TARGET_NODE_IDS'
+    }) ?? maintenance_target_node_ids;
+  if (!run_node_drain_demo) {
+    console.info(
+      '[example] node_drain_demo_skipped reason=PROXMOX_EXAMPLE_NODE_DRAIN_RUN_not_enabled'
+    );
+  } else if (!node_drain_dry_run && !execute_mutations) {
+    console.info(
+      '[example] node_drain_demo_skipped reason=PROXMOX_EXAMPLE_EXECUTE_MUTATIONS_not_enabled'
+    );
+  } else if (node_drain_target_node_ids.length === 0) {
+    console.info(
+      '[example] node_drain_demo_skipped reason=no_target_nodes_available'
+    );
+  } else {
+    try {
+      const node_drain_max_parallel =
+        ResolveOptionalPositiveInteger({
+          raw_value: process.env.PROXMOX_EXAMPLE_NODE_DRAIN_MAX_PARALLEL,
+          field_name: 'PROXMOX_EXAMPLE_NODE_DRAIN_MAX_PARALLEL'
+        }) ?? 2;
+      const drain_result = await proxmox_client.helpers.drainNode({
+        node_id,
+        target_node_ids: node_drain_target_node_ids,
+        include_stopped: false,
+        dry_run: node_drain_dry_run,
+        fail_fast: NormalizeBoolean(process.env.PROXMOX_EXAMPLE_NODE_DRAIN_FAIL_FAST),
+        max_parallel_migrations: node_drain_max_parallel,
+        wait_for_tasks: true,
+        scoring_mode: planner_scoring_mode
+      });
+      console.info(
+        `[example] node_drain_result dry_run=${drain_result.data.dry_run} requested=${drain_result.data.summary.requested} attempted=${drain_result.data.summary.attempted} succeeded=${drain_result.data.summary.succeeded} failed=${drain_result.data.summary.failed} skipped=${drain_result.data.summary.skipped}`
+      );
+      for (const migration_record of drain_result.data.migrations) {
+        console.info(
+          `[example] node_drain_migration type=${migration_record.resource_type} id=${migration_record.resource_id} source=${migration_record.source_node_id} target=${migration_record.target_node_id} submitted=${migration_record.submitted} success=${migration_record.success} task_id=${migration_record.task_id ?? 'none'}`
+        );
+      }
+    } catch (error) {
+      if (error instanceof ProxmoxError) {
+        console.error(
+          `[example] node_drain_error code=${error.code} message=${error.message}`
+        );
+        if (error.details !== undefined) {
+          console.error(
+            `[example] node_drain_error_details=${RenderUnknown(error.details)}`
+          );
+        }
+        LogErrorCauseChain(error);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const task_wait_targets = ResolveTaskWaitTargets({
+    raw_value: process.env.PROXMOX_EXAMPLE_TASK_WAIT_TARGETS,
+    fallback_node_id: node_id
+  });
+  if (task_wait_targets.length === 0) {
+    console.info(
+      '[example] task_wait_skipped reason=PROXMOX_EXAMPLE_TASK_WAIT_TARGETS_not_set'
+    );
+  } else {
+    try {
+      const task_wait_timeout_ms = ResolveOptionalPositiveInteger({
+        raw_value: process.env.PROXMOX_EXAMPLE_TASK_WAIT_TIMEOUT_MS,
+        field_name: 'PROXMOX_EXAMPLE_TASK_WAIT_TIMEOUT_MS'
+      });
+      const task_wait_poll_interval_ms = ResolveOptionalPositiveInteger({
+        raw_value: process.env.PROXMOX_EXAMPLE_TASK_WAIT_POLL_INTERVAL_MS,
+        field_name: 'PROXMOX_EXAMPLE_TASK_WAIT_POLL_INTERVAL_MS'
+      });
+      const task_wait_result = await proxmox_client.task_service.waitForTasks({
+        tasks: task_wait_targets,
+        fail_fast: NormalizeBoolean(process.env.PROXMOX_EXAMPLE_TASK_WAIT_FAIL_FAST),
+        timeout_ms: task_wait_timeout_ms,
+        poll_interval_ms: task_wait_poll_interval_ms
+      });
+      console.info(
+        `[example] task_wait_summary requested=${task_wait_result.data.summary.requested} completed=${task_wait_result.data.summary.completed} succeeded=${task_wait_result.data.summary.succeeded} failed=${task_wait_result.data.summary.failed} pending=${task_wait_result.data.summary.pending}`
+      );
+      for (const task_record of task_wait_result.data.tasks) {
+        console.info(
+          `[example] task_wait_result node=${task_record.node_id} task_id=${task_record.task_id} completed=${task_record.completed} status=${task_record.status ?? 'unknown'} exit_status=${task_record.exit_status ?? 'unknown'} error=${task_record.error?.message ?? 'none'}`
+        );
+      }
+    } catch (error) {
+      if (error instanceof ProxmoxError) {
+        console.error(
+          `[example] task_wait_error code=${error.code} message=${error.message}`
+        );
+        if (error.details !== undefined) {
+          console.error(
+            `[example] task_wait_error_details=${RenderUnknown(error.details)}`
           );
         }
         LogErrorCauseChain(error);

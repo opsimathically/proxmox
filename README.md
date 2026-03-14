@@ -14,13 +14,16 @@ This SDK provides typed clients for common Proxmox domains:
 - virtual machines (QEMU)
 - containers (LXC)
 - access/privilege introspection
+- HA resource management
+- multi-task orchestration
+- replication/backup readiness discovery
 
 Design goals:
 
 - typed request/response contracts in TypeScript
 - strict config parsing and validation at startup
 - secure defaults (`verify_tls` enabled, explicit auth providers, redaction-oriented diagnostics)
-- high-level helper composition for common workflows (for example, LXC create preflight + submit)
+- high-level helper composition for common workflows (for example, cluster preflight/placement, LXC create/destroy, maintenance planning)
 
 ## Feature/capability matrix
 
@@ -35,12 +38,33 @@ Design goals:
 - `getStatus`
 - `getMembership`
 - `listNodes`
+- `allocateNextId`
+- `checkStorageCompatibility`
+- `checkBridgeCompatibility`
 
 ### `pool_service` (`PoolService`)
 
 - `listPools`
 - `getPool`
 - `listPoolResources`
+
+### `ha_service` (`HaService`)
+
+- `listResources`
+- `addResource`
+- `updateResource`
+- `removeResource`
+- `listGroups`
+
+### `task_service` (`TaskService`)
+
+- `waitForTasks`
+
+### `dr_service` (`DrService`)
+
+- `discoverReplicationCapabilities`
+- `discoverBackupCapabilities`
+- `checkDrReadiness`
 
 ### `node_service` (`NodeService`)
 
@@ -92,6 +116,13 @@ Design goals:
 - `teardownAndDestroyLxcContainer` (high-level stop/delete orchestration with optional dry-run + preflight checks)
 - `createLxcContainersBulk` (high-level bulk create orchestration with deterministic ID/hostname generation)
 - `teardownAndDestroyLxcContainersBulk` (high-level bulk destroy orchestration with stop/delete flow)
+- `preflightLxcCreateCluster` (cluster candidate analysis/ranking for LXC placement)
+- `planLxcPlacement` (cluster-aware LXC placement ranking across candidate nodes)
+- `planVmPlacement` (cluster-aware VM placement ranking across candidate nodes)
+- `migrateLxcWithPreflight` (compatibility/permission preflight + LXC migrate orchestration)
+- `migrateVmWithPreflight` (compatibility/permission preflight + VM migrate orchestration)
+- `prepareNodeMaintenance` (read-only maintenance planning for node drain workflows)
+- `drainNode` (guarded node drain execution with dry-run default)
 
 ### `access_service` (`AccessService`)
 
@@ -484,6 +515,232 @@ if (container_list.data.length > 0) {
 }
 ```
 
+### Cluster compatibility and candidate preflight
+
+```ts
+const candidate_nodes = ['node-a', 'node-b', 'node-c'];
+
+const next_lxc_id = await client.cluster_service.allocateNextId({
+  resource_type: 'lxc'
+});
+
+const storage_compat = await client.cluster_service.checkStorageCompatibility({
+  node_ids: candidate_nodes,
+  required_content: 'rootdir',
+  storage_id: 'local-lvm'
+});
+
+const bridge_compat = await client.cluster_service.checkBridgeCompatibility({
+  node_ids: candidate_nodes,
+  bridge: 'vmbr0'
+});
+
+const lxc_cluster_preflight = await client.helpers.preflightLxcCreateCluster({
+  create_input: {
+    general: {
+      node_id: 'node-a',
+      container_id: 9100,
+      hostname: 'cluster-lxc-9100.local'
+    },
+    template: {
+      storage: 'local',
+      template: 'local:vztmpl/debian-12-standard_12.0-1_amd64.tar.zst'
+    },
+    disks: {
+      storage: 'local-lvm',
+      disk_size_gib: 8
+    },
+    network: {
+      bridge: 'vmbr0',
+      ipv4_mode: 'dhcp',
+      ipv6_mode: 'dhcp'
+    }
+  },
+  candidate_node_ids: candidate_nodes,
+  strict_permissions: false
+});
+
+console.log(next_lxc_id.data.next_id, next_lxc_id.data.source);
+console.log(storage_compat.data.compatible_nodes);
+console.log(bridge_compat.data.compatible_nodes);
+console.log(lxc_cluster_preflight.data.recommended_node_id);
+```
+
+Notes:
+
+- `allocateNextId` first tries `/cluster/nextid`, then falls back to scanning `/cluster/resources` when next-id is unavailable.
+- next-id allocation is advisory and can race under concurrent creates; always handle create-time conflicts.
+- compatibility checks are node-scoped and evaluate only the `node_ids` you provide.
+- if your runtime config contains only a subset of cluster nodes, helper workflows that derive candidate nodes from config/discovery can be similarly scoped.
+- `preflightLxcCreateCluster` is read-only and performs no mutation calls.
+
+### Cluster placement planners (read-only)
+
+```ts
+const lxc_plan = await client.helpers.planLxcPlacement({
+  required_storage_id: 'local-lvm',
+  template_storage_id: 'local',
+  required_bridge: 'vmbr0',
+  requested_cores: 2,
+  requested_memory_bytes: 2 * 1024 * 1024 * 1024,
+  candidate_node_ids: ['node-a', 'node-b', 'node-c'],
+  scoring_mode: 'balanced',
+  strict_permissions: false
+});
+
+const vm_plan = await client.helpers.planVmPlacement({
+  required_storage_id: 'local-lvm',
+  required_bridge: 'vmbr0',
+  requested_cores: 4,
+  requested_memory_bytes: 4 * 1024 * 1024 * 1024,
+  candidate_node_ids: ['node-a', 'node-b', 'node-c'],
+  scoring_mode: 'capacity_first'
+});
+
+console.log(lxc_plan.data.recommended_node_id, lxc_plan.data.candidates.length);
+console.log(vm_plan.data.recommended_node_id, vm_plan.data.candidates.length);
+```
+
+### Cluster migration helpers with preflight
+
+```ts
+const lxc_migration = await client.helpers.migrateLxcWithPreflight({
+  node_id: 'node-a',
+  container_id: 200,
+  target_node_id: 'node-b',
+  required_storage_id: 'local-lvm',
+  required_bridge: 'vmbr0',
+  migrate_volumes: true,
+  wait_for_task: true,
+  scoring_mode: 'balanced'
+});
+
+const vm_migration = await client.helpers.migrateVmWithPreflight({
+  node_id: 'node-a',
+  vm_id: 9000,
+  target_node_id: 'node-c',
+  required_storage_id: 'local-lvm',
+  required_bridge: 'vmbr0',
+  online: true,
+  wait_for_task: true,
+  scoring_mode: 'balanced'
+});
+
+console.log(lxc_migration.data.preflight.reason, lxc_migration.data.migration_task?.task_id);
+console.log(vm_migration.data.preflight.reason, vm_migration.data.migration_task?.task_id);
+```
+
+Notes:
+
+- migration helpers are mutation operations and should be guarded behind explicit runtime toggles.
+- preflight failures return typed validation errors before migration is submitted.
+- no hidden migration retries are applied by these helper wrappers.
+
+### HA management service
+
+```ts
+const ha_resources = await client.ha_service.listResources();
+const ha_groups = await client.ha_service.listGroups();
+
+const add_result = await client.ha_service.addResource({
+  sid: 'ct:9100'
+});
+
+const update_result = await client.ha_service.updateResource({
+  sid: 'ct:9100',
+  state: 'started'
+});
+
+const remove_result = await client.ha_service.removeResource({
+  sid: 'ct:9100'
+});
+
+console.log(ha_resources.data.length, ha_groups.data.length);
+console.log(add_result.data.task_id, update_result.data.task_id, remove_result.data.task_id);
+```
+
+HA caveat:
+
+- HA endpoints can be unavailable in non-HA cluster contexts; `ha_service` maps those cases to typed validation errors with actionable context.
+
+### Multi-task orchestration
+
+```ts
+const task_wait = await client.task_service.waitForTasks({
+  tasks: [
+    { node_id: 'node-a', task_id: 'UPID:node-a:...' },
+    { node_id: 'node-b', task_id: 'UPID:node-b:...' }
+  ],
+  fail_fast: false,
+  timeout_ms: 600000,
+  poll_interval_ms: 1500,
+  max_parallel_tasks: 3
+});
+
+console.log(task_wait.data.summary);
+```
+
+Notes:
+
+- this helper waits across many tasks and returns both per-task records and aggregate summary.
+- `fail_fast: true` marks remaining tasks as skipped after the first failed poll result.
+- `waitForTasks` requires task polling to be enabled in profile/runtime configuration.
+
+### Node maintenance planning and drain helper
+
+```ts
+const maintenance_plan = await client.helpers.prepareNodeMaintenance({
+  node_id: 'node-a',
+  target_node_ids: ['node-b', 'node-c'],
+  include_stopped: false,
+  scoring_mode: 'balanced'
+});
+
+console.log(maintenance_plan.data.migration_candidate_count);
+```
+
+```ts
+const drain_preview = await client.helpers.drainNode({
+  node_id: 'node-a',
+  target_node_ids: ['node-b', 'node-c'],
+  dry_run: true,
+  max_parallel_migrations: 2,
+  fail_fast: false
+});
+
+console.log(drain_preview.data.summary);
+```
+
+Drain safety notes:
+
+- `dry_run` defaults to `true` and should be used first.
+- mutating drains require explicit `dry_run: false`.
+- node reboot is never automatic unless `reboot_after_drain: true` and `allow_reboot: true` are both provided.
+
+### Replication / DR discovery foundations
+
+```ts
+const replication = await client.dr_service.discoverReplicationCapabilities({
+  node_id: 'node-a'
+});
+
+const backup = await client.dr_service.discoverBackupCapabilities({
+  node_id: 'node-a'
+});
+
+const dr_readiness = await client.dr_service.checkDrReadiness({
+  node_id: 'node-a',
+  require_backup_storage: true,
+  minimum_backup_storage_count: 1
+});
+
+console.log(replication.data.supported, backup.data.supported, dr_readiness.data.allowed);
+```
+
+DR caveat:
+
+- replication/backup endpoints can vary by Proxmox version/context; capability checks report typed unsupported results instead of brittle hard failures.
+
 ### High-level LXC creation helper
 
 ```ts
@@ -542,6 +799,23 @@ console.log(helper_preview.data.config);
 To actually create and optionally start the container, set `dry_run: false`.
 `start_after_created: true` triggers a follow-up `startContainer` call after create succeeds.
 If `general.add_to_ha: true`, the helper attempts HA registration via `/cluster/ha/resources` and returns a typed validation error when HA is unavailable in the current cluster context.
+
+Mutation guard pattern:
+
+```ts
+const execute_mutations = ['1', 'true', 'yes', 'on'].includes(
+  (process.env.PROXMOX_EXAMPLE_EXECUTE_MUTATIONS ?? '').toLowerCase()
+);
+
+if (!execute_mutations) {
+  console.log('LXC helper mutation skipped');
+} else {
+  await client.helpers.createLxcContainer({
+    /* real create input */
+    dry_run: false
+  });
+}
+```
 
 ### High-level LXC teardown-and-destroy helper
 
@@ -751,6 +1025,27 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_STORAGE_DELETE_VOLUME_ID` + `PROXMOX_EXAMPLE_STORAGE_ALLOW_DELETE=true` (both required to enable delete example)
 - `PROXMOX_EXAMPLE_LXC_HELPER_CONTAINER_ID` (optional container ID for helper dry-run preview, default: `9100`)
 - `PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME` (optional hostname for helper dry-run preview)
+- `PROXMOX_EXAMPLE_LXC_CLUSTER_PREFLIGHT_STRICT_PERMISSIONS` (optional boolean to enforce permission-denied as hard preflight failures)
+- `PROXMOX_EXAMPLE_PLANNER_SCORING_MODE` (optional `balanced`, `capacity_first`, or `strict`)
+- `PROXMOX_EXAMPLE_CLUSTER_MIGRATION_TARGET_NODE_ID` (required for migration demos)
+- `PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_RUN` (set true to run LXC migration helper demo)
+- `PROXMOX_EXAMPLE_CLUSTER_MIGRATION_LXC_ID` (optional LXC ID for migration; falls back to first discovered LXC)
+- `PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_RUN` (set true to run VM migration helper demo)
+- `PROXMOX_EXAMPLE_CLUSTER_MIGRATION_VM_ID` (optional VM ID for migration; falls back to first discovered VM)
+- `PROXMOX_EXAMPLE_CLUSTER_HA_RUN` (set true to run HA service demo block)
+- `PROXMOX_EXAMPLE_CLUSTER_HA_ADD_SID` (optional HA resource SID for add demo, example `ct:9100`)
+- `PROXMOX_EXAMPLE_CLUSTER_HA_UPDATE_SID` (optional HA resource SID for update demo)
+- `PROXMOX_EXAMPLE_CLUSTER_HA_UPDATE_STATE` (optional HA update state, default: `started`)
+- `PROXMOX_EXAMPLE_CLUSTER_HA_REMOVE_SID` (optional HA resource SID for remove demo)
+- `PROXMOX_EXAMPLE_NODE_DRAIN_RUN` (set true to run `helpers.drainNode` demo block)
+- `PROXMOX_EXAMPLE_NODE_DRAIN_DRY_RUN` (optional boolean, default: `true`)
+- `PROXMOX_EXAMPLE_NODE_DRAIN_TARGET_NODE_IDS` (optional comma-separated target nodes for drain, e.g. `node-b,node-c`)
+- `PROXMOX_EXAMPLE_NODE_DRAIN_MAX_PARALLEL` (optional positive integer migration concurrency)
+- `PROXMOX_EXAMPLE_NODE_DRAIN_FAIL_FAST` (optional boolean)
+- `PROXMOX_EXAMPLE_TASK_WAIT_TARGETS` (optional comma-separated task targets; `task_id` or `node_id:task_id`)
+- `PROXMOX_EXAMPLE_TASK_WAIT_TIMEOUT_MS` (optional positive integer timeout for `task_service.waitForTasks`)
+- `PROXMOX_EXAMPLE_TASK_WAIT_POLL_INTERVAL_MS` (optional positive integer poll interval for `task_service.waitForTasks`)
+- `PROXMOX_EXAMPLE_TASK_WAIT_FAIL_FAST` (optional boolean)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_RUN` (set true to run helper destroy demo)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID` (optional destroy target; falls back to helper-created container when available)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
@@ -879,7 +1174,8 @@ Test coverage structure (high level):
 
 - `test/config/*`: config validation, diagnostics, secret resolution
 - `test/core/*`: transport, retry, auth factory, request construction
-- `test/services/*`: VM/LXC/access/storage/pool service contracts and request behavior
+- `test/services/*`: VM/LXC/access/storage/pool/cluster/HA/task/DR service contracts and request behavior
+- `test/helpers/*`: LXC, cluster orchestration, and node maintenance helper contract coverage
 - `test/errors/*`: HTTP-to-typed-error mapping
 
 ## Security best practices
@@ -891,6 +1187,7 @@ Test coverage structure (high level):
 - keep file-based secrets permissioned to least privilege (`0600` recommended).
 - do not log raw authorization headers or token values.
 - use `ca_bundle_path` for private/internal CAs instead of disabling TLS verification.
+- run destructive helper flows (`teardownAndDestroy*`, `drainNode`, bulk operations) with `dry_run` first.
 
 ## Public package surface
 
@@ -898,8 +1195,8 @@ Exports include:
 
 - config helpers: `LoadConfig`, `ValidateConfig`, `ResolveProfile`, `ResolveSecrets`, `BuildConfigDiagnostics`, `EmitStartupDiagnostics`, `ResolveConfigPath`
 - client: `ProxmoxClient`
-- services: `DatacenterService`, `ClusterService`, `PoolService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`
-- helpers: `LxcHelper`, `LxcDestroyHelper`, `ProxmoxHelpers`
+- services: `DatacenterService`, `ClusterService`, `PoolService`, `NodeService`, `VmService`, `LxcService`, `AccessService`, `StorageService`, `HaService`, `TaskService`, `DrService`
+- helpers: `LxcHelper`, `LxcDestroyHelper`, `LxcBulkHelper`, `LxcClusterPreflightHelper`, `ClusterOrchestrationHelper`, `NodeMaintenanceHelper`, `ProxmoxHelpers`
 - shared config/http/service types
 - typed error classes and HTTP error mapper
 

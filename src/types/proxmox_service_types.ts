@@ -528,6 +528,171 @@ export interface proxmox_cluster_nodes_query_i {
   type?: string;
 }
 
+export type proxmox_cluster_resource_type_t = "qemu" | "lxc";
+export type proxmox_cluster_storage_required_content_t = "rootdir" | "images";
+
+export interface proxmox_cluster_next_id_query_i {
+  resource_type?: proxmox_cluster_resource_type_t;
+}
+
+export interface proxmox_cluster_storage_compatibility_query_i {
+  node_ids: string[];
+  required_content: proxmox_cluster_storage_required_content_t;
+  storage_id?: string;
+}
+
+export interface proxmox_cluster_bridge_compatibility_query_i {
+  node_ids: string[];
+  bridge: string;
+}
+
+export type proxmox_cluster_placement_scoring_mode_t =
+  "balanced" | "capacity_first" | "strict";
+
+export interface proxmox_lxc_placement_plan_input_i {
+  required_storage_id: string;
+  template_storage_id?: string;
+  required_bridge?: string;
+  requested_cores?: number;
+  requested_memory_bytes?: number;
+  candidate_node_ids?: string[];
+  preferred_node_ids?: string[];
+  disallowed_node_ids?: string[];
+  required_pool_id?: string;
+  scoring_mode?: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_vm_placement_plan_input_i {
+  required_storage_id: string;
+  required_bridge?: string;
+  requested_cores?: number;
+  requested_memory_bytes?: number;
+  candidate_node_ids?: string[];
+  preferred_node_ids?: string[];
+  disallowed_node_ids?: string[];
+  required_pool_id?: string;
+  scoring_mode?: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_lxc_migration_with_preflight_input_i extends proxmox_task_options_input_i {
+  node_id: string;
+  container_id: proxmox_lxc_id_t;
+  target_node_id: string;
+  required_storage_id: string;
+  required_bridge?: string;
+  requested_cores?: number;
+  requested_memory_bytes?: number;
+  template_storage_id?: string;
+  restart?: boolean;
+  migrate_volumes?: boolean;
+  wait_for_task?: boolean;
+  scoring_mode?: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_vm_migration_with_preflight_input_i extends proxmox_task_options_input_i {
+  node_id: string;
+  vm_id: proxmox_vm_id_t;
+  target_node_id: string;
+  required_storage_id: string;
+  required_bridge?: string;
+  requested_cores?: number;
+  requested_memory_bytes?: number;
+  online?: boolean;
+  force?: boolean;
+  wait_for_task?: boolean;
+  scoring_mode?: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_ha_resources_query_i {
+  type?: string;
+  status?: string;
+}
+
+export interface proxmox_ha_groups_query_i {}
+
+export interface proxmox_ha_resource_add_input_i {
+  sid: string;
+  state?: string;
+  group?: string;
+  max_relocate?: number;
+  max_restart?: number;
+  comment?: string;
+}
+
+export interface proxmox_ha_resource_update_input_i {
+  sid: string;
+  state?: string;
+  group?: string;
+  max_relocate?: number;
+  max_restart?: number;
+  comment?: string;
+  digest?: string;
+}
+
+export interface proxmox_ha_resource_remove_input_i {
+  sid: string;
+}
+
+export interface proxmox_task_wait_many_item_input_i {
+  node_id: string;
+  task_id: string;
+}
+
+export interface proxmox_task_wait_many_input_i {
+  tasks: proxmox_task_wait_many_item_input_i[];
+  fail_fast?: boolean;
+  timeout_ms?: number;
+  poll_interval_ms?: number;
+  max_poll_failures?: number;
+  max_parallel_tasks?: number;
+}
+
+export interface proxmox_node_maintenance_prepare_input_i {
+  node_id: string;
+  target_node_ids?: string[];
+  include_resource_types?: Array<"qemu" | "lxc">;
+  include_resource_ids?: string[];
+  exclude_resource_ids?: string[];
+  include_stopped?: boolean;
+  required_bridge?: string;
+  scoring_mode?: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_node_drain_input_i extends proxmox_node_maintenance_prepare_input_i {
+  dry_run?: boolean;
+  max_parallel_migrations?: number;
+  fail_fast?: boolean;
+  wait_for_tasks?: boolean;
+  timeout_ms?: number;
+  retry_allowed?: boolean;
+  lxc_migrate_volumes?: boolean;
+  lxc_restart?: boolean;
+  vm_online?: boolean;
+  vm_force?: boolean;
+  reboot_after_drain?: boolean;
+  allow_reboot?: boolean;
+}
+
+export interface proxmox_dr_replication_discovery_query_i {
+  node_id?: string;
+}
+
+export interface proxmox_dr_backup_discovery_query_i {
+  node_id?: string;
+}
+
+export interface proxmox_dr_readiness_query_i {
+  node_id?: string;
+  require_replication_jobs?: boolean;
+  require_backup_storage?: boolean;
+  minimum_backup_storage_count?: number;
+}
+
 export interface proxmox_node_list_query_i {
   running?: boolean;
 }
@@ -633,6 +798,55 @@ export interface proxmox_access_permissions_record_i {
   auth_id?: string;
   privileges: proxmox_access_privileges_t;
   raw_permissions: Record<string, unknown>;
+}
+
+export type proxmox_cluster_next_id_source_t =
+  "cluster_nextid_endpoint" | "cluster_resources_fallback";
+
+export interface proxmox_cluster_next_id_record_i {
+  next_id: number;
+  source: proxmox_cluster_next_id_source_t;
+  resource_type?: proxmox_cluster_resource_type_t;
+  raw: unknown;
+}
+
+export interface proxmox_cluster_storage_compatibility_node_record_i {
+  node_id: string;
+  compatible: boolean;
+  reason: string;
+  required_content: proxmox_cluster_storage_required_content_t;
+  storage_id?: string;
+  matching_storage_ids: string[];
+  checked_storage_ids: string[];
+  raw_storage_records: Record<string, unknown>[];
+}
+
+export interface proxmox_cluster_storage_compatibility_record_i {
+  required_content: proxmox_cluster_storage_required_content_t;
+  storage_id?: string;
+  checked_node_count: number;
+  compatible_nodes: string[];
+  incompatible_nodes: string[];
+  nodes: proxmox_cluster_storage_compatibility_node_record_i[];
+}
+
+export interface proxmox_cluster_bridge_compatibility_node_record_i {
+  node_id: string;
+  bridge: string;
+  compatible: boolean;
+  reason: string;
+  bridge_found: boolean;
+  is_bridge: boolean;
+  interface_type?: string;
+  raw_interface?: Record<string, unknown>;
+}
+
+export interface proxmox_cluster_bridge_compatibility_record_i {
+  bridge: string;
+  checked_node_count: number;
+  compatible_nodes: string[];
+  incompatible_nodes: string[];
+  nodes: proxmox_cluster_bridge_compatibility_node_record_i[];
 }
 
 export interface proxmox_access_privilege_check_record_i {
@@ -907,11 +1121,299 @@ export interface proxmox_lxc_helper_bulk_destroy_record_i {
   items: proxmox_lxc_helper_bulk_destroy_item_record_i[];
 }
 
+export interface proxmox_lxc_cluster_preflight_input_i {
+  create_input: proxmox_lxc_helper_create_input_i;
+  candidate_node_ids?: string[];
+  strict_permissions?: boolean;
+}
+
+export interface proxmox_lxc_cluster_preflight_check_record_i {
+  check: string;
+  passed: boolean;
+  reason: string;
+  source: "cluster_service" | "helper_preflight" | "access_service";
+  required: boolean;
+}
+
+export interface proxmox_lxc_cluster_preflight_permission_record_i {
+  path: string;
+  privilege: string;
+  allowed: boolean;
+}
+
+export interface proxmox_lxc_cluster_preflight_candidate_record_i {
+  node_id: string;
+  allowed: boolean;
+  score: number;
+  failed_required_checks: number;
+  checks: proxmox_lxc_cluster_preflight_check_record_i[];
+  permissions: proxmox_lxc_cluster_preflight_permission_record_i[];
+  helper_preflight: proxmox_lxc_helper_preflight_result_t;
+}
+
+export interface proxmox_lxc_cluster_preflight_record_i {
+  strict_permissions: boolean;
+  checked_node_count: number;
+  allowed_node_count: number;
+  denied_node_count: number;
+  recommended_node_id?: string;
+  candidates: proxmox_lxc_cluster_preflight_candidate_record_i[];
+}
+
+export interface proxmox_cluster_placement_evidence_record_i {
+  evaluated_at_iso: string;
+  cpu_evaluated_at_iso?: string;
+  memory_evaluated_at_iso?: string;
+  storage_evaluated_at_iso?: string;
+  bridge_evaluated_at_iso?: string;
+}
+
+export interface proxmox_cluster_placement_check_record_i {
+  check: string;
+  passed: boolean;
+  reason: string;
+  source: "cluster_service" | "node_service" | "access_service" | "input";
+  required: boolean;
+}
+
+export interface proxmox_cluster_placement_candidate_metrics_record_i {
+  logical_cpu_count?: number;
+  available_cores?: number;
+  free_memory_bytes?: number;
+  available_memory_bytes?: number;
+}
+
+export interface proxmox_cluster_placement_candidate_record_i {
+  node_id: string;
+  allowed: boolean;
+  score: number;
+  failed_required_checks: number;
+  checks: proxmox_cluster_placement_check_record_i[];
+  metrics: proxmox_cluster_placement_candidate_metrics_record_i;
+  evidence: proxmox_cluster_placement_evidence_record_i;
+}
+
+export interface proxmox_cluster_placement_plan_record_i {
+  resource_type: proxmox_cluster_resource_type_t;
+  scoring_mode: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions: boolean;
+  required_storage_id: string;
+  required_storage_content: proxmox_cluster_storage_required_content_t;
+  template_storage_id?: string;
+  required_bridge?: string;
+  required_pool_id?: string;
+  requested_cores?: number;
+  requested_memory_bytes?: number;
+  checked_node_count: number;
+  allowed_node_count: number;
+  denied_node_count: number;
+  recommended_node_id?: string;
+  candidates: proxmox_cluster_placement_candidate_record_i[];
+}
+
+export interface proxmox_cluster_migration_preflight_record_i {
+  scoring_mode: proxmox_cluster_placement_scoring_mode_t;
+  strict_permissions: boolean;
+  source_node_id: string;
+  target_node_id: string;
+  allowed: boolean;
+  reason: string;
+  planner: proxmox_cluster_placement_plan_record_i;
+  target_candidate?: proxmox_cluster_placement_candidate_record_i;
+}
+
+export interface proxmox_lxc_migration_with_preflight_record_i {
+  resource_type: "lxc";
+  node_id: string;
+  target_node_id: string;
+  container_id: string;
+  preflight: proxmox_cluster_migration_preflight_record_i;
+  migration_task?: proxmox_lxc_task_result_t;
+}
+
+export interface proxmox_vm_migration_with_preflight_record_i {
+  resource_type: "qemu";
+  node_id: string;
+  target_node_id: string;
+  vm_id: string;
+  preflight: proxmox_cluster_migration_preflight_record_i;
+  migration_task?: proxmox_vm_task_result_t;
+}
+
+export interface proxmox_ha_resource_record_i {
+  sid: string;
+  state?: string;
+  group?: string;
+  max_relocate?: number;
+  max_restart?: number;
+  comment?: string;
+  status?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_ha_group_record_i {
+  group: string;
+  nodes?: string;
+  restricted?: boolean;
+  nofailback?: boolean;
+  comment?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface proxmox_ha_write_record_i {
+  operation: "add_resource" | "update_resource" | "remove_resource";
+  sid: string;
+  task_id: string;
+}
+
+export interface proxmox_task_wait_many_error_record_i {
+  code?: string;
+  message: string;
+  status_code?: number;
+  path?: string;
+  field?: string;
+}
+
+export interface proxmox_task_wait_many_item_record_i {
+  node_id: string;
+  task_id: string;
+  completed: boolean;
+  status?: "running" | "stopped" | "ok" | "error" | "unknown";
+  exit_status?: "OK" | "ERROR";
+  percent?: number;
+  message?: string;
+  error?: proxmox_task_wait_many_error_record_i;
+  raw?: unknown;
+}
+
+export interface proxmox_task_wait_many_summary_record_i {
+  requested: number;
+  completed: number;
+  succeeded: number;
+  failed: number;
+  pending: number;
+}
+
+export interface proxmox_task_wait_many_record_i {
+  fail_fast: boolean;
+  timeout_ms?: number;
+  poll_interval_ms?: number;
+  max_poll_failures?: number;
+  max_parallel_tasks: number;
+  summary: proxmox_task_wait_many_summary_record_i;
+  tasks: proxmox_task_wait_many_item_record_i[];
+}
+
+export interface proxmox_node_maintenance_plan_resource_record_i {
+  resource_type: "qemu" | "lxc";
+  resource_id: string;
+  node_id: string;
+  status?: string;
+  name?: string;
+  selected_for_drain: boolean;
+  blocked: boolean;
+  reason: string;
+  target_node_id?: string;
+  planner_score?: number;
+  planner_failed_required_checks?: number;
+  planner_raw?: proxmox_cluster_placement_candidate_t;
+}
+
+export interface proxmox_node_maintenance_plan_record_i {
+  source_node_id: string;
+  target_node_ids: string[];
+  checked_resource_count: number;
+  selected_resource_count: number;
+  blocked_resource_count: number;
+  migration_candidate_count: number;
+  planned_reboot: boolean;
+  resources: proxmox_node_maintenance_plan_resource_record_i[];
+}
+
+export interface proxmox_node_drain_migration_record_i {
+  resource_type: "qemu" | "lxc";
+  resource_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  submitted: boolean;
+  success: boolean;
+  task_id?: string;
+  operation?: string;
+  error?: proxmox_task_wait_many_error_record_i;
+}
+
+export interface proxmox_node_drain_record_i {
+  source_node_id: string;
+  dry_run: boolean;
+  fail_fast: boolean;
+  wait_for_tasks: boolean;
+  max_parallel_migrations: number;
+  planned_reboot: boolean;
+  reboot_executed: boolean;
+  plan: proxmox_node_maintenance_plan_record_i;
+  summary: {
+    requested: number;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+  };
+  migrations: proxmox_node_drain_migration_record_i[];
+  reboot_task?: proxmox_node_reboot_result_t;
+}
+
+export interface proxmox_dr_capability_check_record_i {
+  capability: string;
+  supported: boolean;
+  reason: string;
+  endpoint?: string;
+  status_code?: number;
+}
+
+export interface proxmox_dr_replication_discovery_record_i {
+  node_id?: string;
+  supported: boolean;
+  checks: proxmox_dr_capability_check_record_i[];
+  cluster_jobs_count: number;
+  node_jobs_count: number;
+  cluster_jobs_raw: Record<string, unknown>[];
+  node_jobs_raw: Record<string, unknown>[];
+}
+
+export interface proxmox_dr_backup_discovery_record_i {
+  node_id?: string;
+  supported: boolean;
+  checks: proxmox_dr_capability_check_record_i[];
+  backup_schedule_count: number;
+  backup_storage_count: number;
+  backup_storage_ids: string[];
+  backup_schedules_raw: Record<string, unknown>[];
+  backup_storage_raw: Record<string, unknown>[];
+}
+
+export interface proxmox_dr_readiness_check_record_i {
+  check: string;
+  passed: boolean;
+  reason: string;
+}
+
+export interface proxmox_dr_readiness_record_i {
+  node_id?: string;
+  allowed: boolean;
+  failed_checks: number;
+  checks: proxmox_dr_readiness_check_record_i[];
+  replication: proxmox_dr_replication_discovery_record_i;
+  backup: proxmox_dr_backup_discovery_record_i;
+}
+
 export type proxmox_datacenter_summary_t = proxmox_datacenter_summary_record_i;
 export type proxmox_datacenter_storage_list_t = proxmox_datacenter_storage_record_i[];
 export type proxmox_datacenter_version_t = proxmox_version_info_i;
 export type proxmox_cluster_status_t = proxmox_cluster_status_record_i[];
 export type proxmox_cluster_membership_t = proxmox_cluster_member_record_i[];
+export type proxmox_cluster_next_id_t = proxmox_cluster_next_id_record_i;
+export type proxmox_cluster_storage_compatibility_t = proxmox_cluster_storage_compatibility_record_i;
+export type proxmox_cluster_bridge_compatibility_t = proxmox_cluster_bridge_compatibility_record_i;
 export type proxmox_node_list_t = proxmox_node_record_i[];
 export type proxmox_node_status_t = proxmox_node_status_record_i;
 export type proxmox_node_services_t = proxmox_node_service_record_i[];
@@ -979,6 +1481,35 @@ export type proxmox_lxc_helper_bulk_create_item_t = proxmox_lxc_helper_bulk_crea
 export type proxmox_lxc_helper_bulk_create_t = proxmox_lxc_helper_bulk_create_record_i;
 export type proxmox_lxc_helper_bulk_destroy_item_t = proxmox_lxc_helper_bulk_destroy_item_record_i;
 export type proxmox_lxc_helper_bulk_destroy_t = proxmox_lxc_helper_bulk_destroy_record_i;
+export type proxmox_lxc_cluster_preflight_input_t = proxmox_lxc_cluster_preflight_input_i;
+export type proxmox_lxc_cluster_preflight_check_t = proxmox_lxc_cluster_preflight_check_record_i;
+export type proxmox_lxc_cluster_preflight_permission_t = proxmox_lxc_cluster_preflight_permission_record_i;
+export type proxmox_lxc_cluster_preflight_candidate_t = proxmox_lxc_cluster_preflight_candidate_record_i;
+export type proxmox_lxc_cluster_preflight_t = proxmox_lxc_cluster_preflight_record_i;
+export type proxmox_cluster_placement_check_t = proxmox_cluster_placement_check_record_i;
+export type proxmox_cluster_placement_candidate_t = proxmox_cluster_placement_candidate_record_i;
+export type proxmox_cluster_placement_plan_t = proxmox_cluster_placement_plan_record_i;
+export type proxmox_cluster_migration_preflight_t = proxmox_cluster_migration_preflight_record_i;
+export type proxmox_lxc_migration_with_preflight_t = proxmox_lxc_migration_with_preflight_record_i;
+export type proxmox_vm_migration_with_preflight_t = proxmox_vm_migration_with_preflight_record_i;
+export type proxmox_ha_resource_t = proxmox_ha_resource_record_i;
+export type proxmox_ha_resource_list_t = proxmox_ha_resource_t[];
+export type proxmox_ha_group_t = proxmox_ha_group_record_i;
+export type proxmox_ha_group_list_t = proxmox_ha_group_t[];
+export type proxmox_ha_write_t = proxmox_ha_write_record_i;
+export type proxmox_task_wait_many_error_t = proxmox_task_wait_many_error_record_i;
+export type proxmox_task_wait_many_item_t = proxmox_task_wait_many_item_record_i;
+export type proxmox_task_wait_many_summary_t = proxmox_task_wait_many_summary_record_i;
+export type proxmox_task_wait_many_t = proxmox_task_wait_many_record_i;
+export type proxmox_node_maintenance_plan_resource_t = proxmox_node_maintenance_plan_resource_record_i;
+export type proxmox_node_maintenance_plan_t = proxmox_node_maintenance_plan_record_i;
+export type proxmox_node_drain_migration_t = proxmox_node_drain_migration_record_i;
+export type proxmox_node_drain_t = proxmox_node_drain_record_i;
+export type proxmox_dr_capability_check_t = proxmox_dr_capability_check_record_i;
+export type proxmox_dr_replication_discovery_t = proxmox_dr_replication_discovery_record_i;
+export type proxmox_dr_backup_discovery_t = proxmox_dr_backup_discovery_record_i;
+export type proxmox_dr_readiness_check_t = proxmox_dr_readiness_check_record_i;
+export type proxmox_dr_readiness_t = proxmox_dr_readiness_record_i;
 export type proxmox_storage_content_list_response_t = proxmox_api_response_t<proxmox_storage_content_list_t>;
 export type proxmox_storage_template_catalog_response_t = proxmox_api_response_t<proxmox_storage_template_catalog_list_t>;
 export type proxmox_storage_task_response_t = proxmox_api_response_t<proxmox_storage_task_t>;
@@ -987,6 +1518,24 @@ export type proxmox_lxc_helper_create_response_t = proxmox_api_response_t<proxmo
 export type proxmox_lxc_helper_destroy_response_t = proxmox_api_response_t<proxmox_lxc_helper_destroy_t>;
 export type proxmox_lxc_helper_bulk_create_response_t = proxmox_api_response_t<proxmox_lxc_helper_bulk_create_t>;
 export type proxmox_lxc_helper_bulk_destroy_response_t = proxmox_api_response_t<proxmox_lxc_helper_bulk_destroy_t>;
+export type proxmox_lxc_cluster_preflight_response_t = proxmox_api_response_t<proxmox_lxc_cluster_preflight_t>;
+export type proxmox_lxc_placement_plan_response_t = proxmox_api_response_t<proxmox_cluster_placement_plan_t>;
+export type proxmox_vm_placement_plan_response_t = proxmox_api_response_t<proxmox_cluster_placement_plan_t>;
+export type proxmox_lxc_migration_with_preflight_response_t =
+  proxmox_api_response_t<proxmox_lxc_migration_with_preflight_t>;
+export type proxmox_vm_migration_with_preflight_response_t =
+  proxmox_api_response_t<proxmox_vm_migration_with_preflight_t>;
+export type proxmox_ha_resource_list_response_t = proxmox_api_response_t<proxmox_ha_resource_list_t>;
+export type proxmox_ha_group_list_response_t = proxmox_api_response_t<proxmox_ha_group_list_t>;
+export type proxmox_ha_write_response_t = proxmox_api_response_t<proxmox_ha_write_t>;
+export type proxmox_task_wait_many_response_t = proxmox_api_response_t<proxmox_task_wait_many_t>;
+export type proxmox_node_maintenance_plan_response_t = proxmox_api_response_t<proxmox_node_maintenance_plan_t>;
+export type proxmox_node_drain_response_t = proxmox_api_response_t<proxmox_node_drain_t>;
+export type proxmox_dr_replication_discovery_response_t =
+  proxmox_api_response_t<proxmox_dr_replication_discovery_t>;
+export type proxmox_dr_backup_discovery_response_t =
+  proxmox_api_response_t<proxmox_dr_backup_discovery_t>;
+export type proxmox_dr_readiness_response_t = proxmox_api_response_t<proxmox_dr_readiness_t>;
 
 export type proxmox_vm_record_t = proxmox_vm_record_i;
 export type proxmox_lxc_record_t = proxmox_lxc_record_i;
@@ -1005,3 +1554,6 @@ export type proxmox_vm_list_response_t = proxmox_api_response_t<proxmox_vm_list_
 export type proxmox_lxc_list_response_t = proxmox_api_response_t<proxmox_lxc_list_t>;
 export type proxmox_vm_get_response_t = proxmox_api_response_t<proxmox_vm_get_t>;
 export type proxmox_lxc_get_response_t = proxmox_api_response_t<proxmox_lxc_get_t>;
+export type proxmox_cluster_next_id_response_t = proxmox_api_response_t<proxmox_cluster_next_id_t>;
+export type proxmox_cluster_storage_compatibility_response_t = proxmox_api_response_t<proxmox_cluster_storage_compatibility_t>;
+export type proxmox_cluster_bridge_compatibility_response_t = proxmox_api_response_t<proxmox_cluster_bridge_compatibility_t>;

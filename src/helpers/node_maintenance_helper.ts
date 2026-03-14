@@ -2,11 +2,13 @@ import { ProxmoxError, ProxmoxValidationError } from "../errors/proxmox_error";
 import {
   proxmox_cluster_nodes_response_t,
   proxmox_datacenter_storage_record_i,
+  proxmox_lxc_list_response_t,
   proxmox_node_drain_input_i,
   proxmox_node_drain_response_t,
   proxmox_node_maintenance_plan_record_i,
   proxmox_node_maintenance_plan_response_t,
   proxmox_node_maintenance_prepare_input_i,
+  proxmox_vm_list_response_t,
   proxmox_vm_placement_plan_response_t,
   proxmox_lxc_placement_plan_response_t,
   proxmox_vm_task_result_t,
@@ -29,9 +31,7 @@ interface datacenter_service_node_maintenance_i {
 interface vm_service_node_maintenance_i {
   listVms(params?: {
     node_id?: string;
-  }): Promise<{
-    data: Array<Record<string, unknown>>;
-  }>;
+  }): Promise<proxmox_vm_list_response_t>;
   migrateVm(
     params: {
       node_id: string;
@@ -49,9 +49,7 @@ interface vm_service_node_maintenance_i {
 interface lxc_service_node_maintenance_i {
   listContainers(params?: {
     node_id?: string;
-  }): Promise<{
-    data: Array<Record<string, unknown>>;
-  }>;
+  }): Promise<proxmox_lxc_list_response_t>;
   migrateContainer(
     params: {
       node_id: string;

@@ -2785,7 +2785,7 @@ async function Main(): Promise<void> {
       );
     } else {
       const lxc_expect_callback_smoke_run = NormalizeBoolean(
-        process.env.PROXMOX_EXAMPLE_LXC_EXPECT_CALLBACK_SMOKE_RUN ?? 'false'
+        process.env.PROXMOX_EXAMPLE_LXC_EXPECT_CALLBACK_SMOKE_RUN ?? 'true'
       );
       const lxc_expect_steps: Parameters<typeof proxmox_client.lxc_expect_service.runScript>[0]['script']['steps'] = [
         {

@@ -1210,6 +1210,8 @@ function CompileMatcher(params: {
         },
       });
     }
+    const callback_matcher = params.matcher.callback_matcher;
+    const matcher_timeout_ms = params.matcher.timeout_ms;
     let previous_invocation_signature: string | undefined;
     let previous_result: {
       matched: boolean;
@@ -1237,14 +1239,14 @@ function CompileMatcher(params: {
         }
         ThrowIfAborted(match_params.abort_signal);
         const callback_timeout_ms = ResolveCallbackTimeoutMs({
-          raw_timeout_ms: params.matcher.timeout_ms ?? match_params.callback_timeout_ms,
+          raw_timeout_ms: matcher_timeout_ms ?? match_params.callback_timeout_ms,
           field_name: `matcher[${params.matcher_index}].timeout_ms`,
           fallback_timeout_ms: DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS,
         });
         let callback_result: boolean | proxmox_expect_callback_matcher_result_t;
         try {
           callback_result = await RunCallbackMatcherWithTimeout({
-            callback_matcher: params.matcher.callback_matcher,
+            callback_matcher,
             timeout_ms: callback_timeout_ms,
             callback_input: {
               buffer_text: match_params.buffer_text,

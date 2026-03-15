@@ -2784,6 +2784,78 @@ async function Main(): Promise<void> {
         '[example] lxc_expect_smoke_skipped reason=PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN_not_enabled'
       );
     } else {
+      const lxc_expect_callback_smoke_run = NormalizeBoolean(
+        process.env.PROXMOX_EXAMPLE_LXC_EXPECT_CALLBACK_SMOKE_RUN ?? 'false'
+      );
+      const lxc_expect_steps: Parameters<typeof proxmox_client.lxc_expect_service.runScript>[0]['script']['steps'] = [
+        {
+          step_id: 'expect_prompt_ready',
+          send_input: '\n',
+          expect: [
+            {
+              matcher_id: 'expect_prompt_ready',
+              kind: 'string',
+              value: '#'
+            }
+          ],
+          fail_on_timeout: true
+        },
+        {
+          step_id: 'expect_marker_exec',
+          send_input: 'printf "SDK_EXPECT_OK\\n"\n',
+          expect: [
+            {
+              matcher_id: 'expect_marker_exec',
+              kind: 'string',
+              value: 'SDK_EXPECT_OK'
+            }
+          ],
+          fail_on_timeout: true
+        },
+        {
+          step_id: 'expect_uid_zero',
+          send_input: 'id -u\n',
+          expect: [
+            {
+              matcher_id: 'expect_uid_zero',
+              kind: 'regex',
+              pattern: '(?:^|\\s)0(?:\\s|$)'
+            }
+          ],
+          fail_on_timeout: true
+        }
+      ];
+      if (lxc_expect_callback_smoke_run) {
+        lxc_expect_steps.push({
+          step_id: 'expect_callback_marker',
+          send_input: 'printf "SDK_CALLBACK_OK\\n"\n',
+          expect: [
+            {
+              matcher_id: 'expect_callback_marker',
+              kind: 'callback',
+              timeout_ms: 750,
+              callback_matcher: async ({ buffer_text }): Promise<boolean> => {
+                await SleepForLxcSmoke(5);
+                return buffer_text.includes('SDK_CALLBACK_OK');
+              }
+            }
+          ],
+          callback_timeout_ms: 750,
+          fail_on_timeout: true
+        });
+      }
+      lxc_expect_steps.push({
+        step_id: 'expect_exit',
+        send_input: 'exit\n',
+        expect: [
+          {
+            matcher_id: 'expect_exit',
+            kind: 'string',
+            value: 'exit'
+          }
+        ],
+        fail_on_timeout: false
+      });
       const lxc_expect_result = await proxmox_client.lxc_expect_service.runScript({
         target: {
           open_terminal_input: {
@@ -2800,56 +2872,7 @@ async function Main(): Promise<void> {
           default_timeout_ms: lxc_smoke_timeout_ms,
           default_poll_interval_ms: 100,
           max_buffer_bytes: 128 * 1024,
-          steps: [
-            {
-              step_id: 'expect_prompt_ready',
-              send_input: '\n',
-              expect: [
-                {
-                  matcher_id: 'expect_prompt_ready',
-                  kind: 'string',
-                  value: '#'
-                }
-              ],
-              fail_on_timeout: true
-            },
-            {
-              step_id: 'expect_marker_exec',
-              send_input: 'printf "SDK_EXPECT_OK\\n"\n',
-              expect: [
-                {
-                  matcher_id: 'expect_marker_exec',
-                  kind: 'string',
-                  value: 'SDK_EXPECT_OK'
-                }
-              ],
-              fail_on_timeout: true
-            },
-            {
-              step_id: 'expect_uid_zero',
-              send_input: 'id -u\n',
-              expect: [
-                {
-                  matcher_id: 'expect_uid_zero',
-                  kind: 'regex',
-                  pattern: '(?:^|\\s)0(?:\\s|$)'
-                }
-              ],
-              fail_on_timeout: true
-            },
-            {
-              step_id: 'expect_exit',
-              send_input: 'exit\n',
-              expect: [
-                {
-                  matcher_id: 'expect_exit',
-                  kind: 'string',
-                  value: 'exit'
-                }
-              ],
-              fail_on_timeout: false
-            }
-          ]
+          steps: lxc_expect_steps
         }
       });
       console.info(

@@ -1,10 +1,12 @@
 import { proxmox_lxc_terminal_open_input_i } from "./proxmox_service_types";
 
 export type proxmox_expect_stream_target_t = "stdout" | "stderr" | "combined";
-export type proxmox_expect_matcher_kind_t = "string" | "regex";
+export type proxmox_expect_matcher_kind_t = "string" | "regex" | "callback";
 export type proxmox_expect_wait_status_t = "matched" | "timeout" | "unexpected_output";
 export type proxmox_expect_step_status_t =
   "matched" | "timeout" | "unexpected_output" | "completed_without_expect" | "failed";
+export type proxmox_expect_callback_metadata_value_t = string | number | boolean | null;
+export type proxmox_expect_callback_metadata_t = Record<string, proxmox_expect_callback_metadata_value_t>;
 
 export interface proxmox_expect_string_matcher_i {
   matcher_id?: string;
@@ -20,9 +22,34 @@ export interface proxmox_expect_regex_matcher_i {
   flags?: string;
 }
 
+export interface proxmox_expect_callback_matcher_input_i {
+  buffer_text: string;
+  latest_chunk: string;
+  elapsed_ms: number;
+  step_id?: string;
+  abort_signal?: AbortSignal;
+}
+
+export interface proxmox_expect_callback_matcher_result_i {
+  matched: boolean;
+  matched_text?: string;
+  capture_groups?: string[];
+  metadata?: proxmox_expect_callback_metadata_t;
+}
+
+export interface proxmox_expect_callback_matcher_i {
+  matcher_id?: string;
+  kind: "callback";
+  callback_matcher: (
+    params: proxmox_expect_callback_matcher_input_t
+  ) => Promise<boolean | proxmox_expect_callback_matcher_result_t> | boolean | proxmox_expect_callback_matcher_result_t;
+  timeout_ms?: number;
+}
+
 export type proxmox_expect_matcher_t =
   | proxmox_expect_string_matcher_i
-  | proxmox_expect_regex_matcher_i;
+  | proxmox_expect_regex_matcher_i
+  | proxmox_expect_callback_matcher_i;
 
 export interface proxmox_expect_match_result_i {
   matched: boolean;
@@ -31,6 +58,7 @@ export interface proxmox_expect_match_result_i {
   matcher_kind: proxmox_expect_matcher_kind_t;
   matched_text: string;
   capture_groups?: string[];
+  metadata?: proxmox_expect_callback_metadata_t;
   elapsed_ms: number;
   buffer_excerpt: string;
 }
@@ -43,6 +71,7 @@ export interface proxmox_expect_wait_for_input_i {
   max_buffer_bytes?: number;
   stream_target?: proxmox_expect_stream_target_t;
   capture_groups?: boolean;
+  callback_timeout_ms?: number;
   fail_on_unexpected_output?: boolean;
   unexpected_matchers?: proxmox_expect_matcher_t[];
   abort_signal?: AbortSignal;
@@ -79,6 +108,7 @@ export interface proxmox_expect_step_i {
   fail_on_unexpected_output?: boolean;
   unexpected_matchers?: proxmox_expect_matcher_t[];
   capture_groups?: boolean;
+  callback_timeout_ms?: number;
   next_step_id?: string;
   on_timeout_step_id?: string;
   on_unexpected_step_id?: string;
@@ -90,6 +120,7 @@ export interface proxmox_expect_script_i {
   start_step_id?: string;
   default_timeout_ms?: number;
   default_poll_interval_ms?: number;
+  default_callback_timeout_ms?: number;
   max_buffer_bytes?: number;
   max_step_retries?: number;
 }
@@ -153,6 +184,8 @@ export interface proxmox_expect_script_result_i {
 }
 
 export type proxmox_expect_match_result_t = proxmox_expect_match_result_i;
+export type proxmox_expect_callback_matcher_input_t = proxmox_expect_callback_matcher_input_i;
+export type proxmox_expect_callback_matcher_result_t = proxmox_expect_callback_matcher_result_i;
 export type proxmox_expect_wait_for_result_t = proxmox_expect_wait_for_result_i;
 export type proxmox_expect_step_t = proxmox_expect_step_i;
 export type proxmox_expect_script_t = proxmox_expect_script_i;

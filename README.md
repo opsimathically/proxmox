@@ -1119,6 +1119,7 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID` (optional destroy target; falls back to helper-created container when available)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
 - `PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN` (set true to run `lxc_expect_service.runScript` smoke flow against the configured LXC smoke target)
+- `PROXMOX_EXAMPLE_LXC_EXPECT_CALLBACK_SMOKE_RUN` (set true to include callback matcher step in expect smoke flow)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_RUN` (optional boolean, default: `true`, enables non-destructive LXC shell smoke flow)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID` (optional smoke node override, default: `g75`)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID` (optional smoke container override, default: `100`)
@@ -1289,6 +1290,12 @@ await client.lxc_service.closeTerminalSession({
 
 `LxcExpectService` provides deterministic send/wait/branch scripting over SSH-backed LXC terminal sessions.
 
+Valid matcher kinds:
+
+- `string`
+- `regex`
+- `callback`
+
 ### Simple `sendAndExpect`
 
 ```ts
@@ -1310,6 +1317,29 @@ const wait_result = await client.lxc_expect_service.sendAndExpect({
 });
 
 console.log(wait_result.status, wait_result.match?.matched_text);
+```
+
+### Simple `sendAndExpect` with `callback` matcher
+
+```ts
+const callback_wait_result = await client.lxc_expect_service.sendAndExpect({
+  session_id: session.session_id,
+  send_input: 'echo MODE=C\\n',
+  expect: {
+    kind: 'callback',
+    timeout_ms: 500,
+    callback_matcher: async ({ buffer_text, latest_chunk }) => {
+      if (latest_chunk.includes('MODE=C')) {
+        return { matched: true, matched_text: 'MODE=C' };
+      }
+      return buffer_text.includes('MODE=C');
+    }
+  },
+  callback_timeout_ms: 500,
+  timeout_ms: 15000
+});
+
+console.log(callback_wait_result.status, callback_wait_result.match?.matcher_kind);
 ```
 
 ### Multi-step `runScript` with branching
@@ -1334,11 +1364,18 @@ const script_result = await client.lxc_expect_service.runScript({
         send_input: 'echo MODE=B\\n',
         expect: [
           { matcher_id: 'mode_a', kind: 'string', value: 'MODE=A' },
-          { matcher_id: 'mode_b', kind: 'string', value: 'MODE=B' }
+          { matcher_id: 'mode_b', kind: 'string', value: 'MODE=B' },
+          {
+            matcher_id: 'mode_c',
+            kind: 'callback',
+            timeout_ms: 500,
+            callback_matcher: async ({ buffer_text }) => buffer_text.includes('MODE=C')
+          }
         ],
         next_step_by_matcher_id: {
           mode_a: 'branch_a',
-          mode_b: 'branch_b'
+          mode_b: 'branch_b',
+          mode_c: 'branch_c'
         }
       },
       {
@@ -1350,6 +1387,11 @@ const script_result = await client.lxc_expect_service.runScript({
         step_id: 'branch_b',
         send_input: 'echo BRANCH_B\\n',
         expect: { kind: 'string', value: 'BRANCH_B' }
+      },
+      {
+        step_id: 'branch_c',
+        send_input: 'echo BRANCH_C\\n',
+        expect: { kind: 'string', value: 'BRANCH_C' }
       }
     ]
   }
@@ -1390,11 +1432,43 @@ try {
 }
 ```
 
+### Callback matcher (async)
+
+Use callback matchers for runtime matching logic that is not practical as a plain string/regex pattern.
+
+```ts
+const callback_wait_result = await client.lxc_expect_service.waitFor({
+  session_id: session.session_id,
+  expect: {
+    kind: 'callback',
+    timeout_ms: 500,
+    callback_matcher: async ({ buffer_text, latest_chunk, elapsed_ms }) => {
+      if (elapsed_ms < 100) {
+        return false;
+      }
+      if (latest_chunk.includes('READY')) {
+        return {
+          matched: true,
+          matched_text: 'READY'
+        };
+      }
+      return buffer_text.includes('READY');
+    }
+  },
+  callback_timeout_ms: 500,
+  timeout_ms: 15000
+});
+
+console.log(callback_wait_result.status, callback_wait_result.match?.matcher_kind);
+```
+
 Notes:
 
 - use `sensitive_input: true` on script steps to redact input in transcript.
 - limit transcript growth with `script.max_buffer_bytes`.
 - `stream_target` currently supports `combined` only for SSH terminal events.
+- use `callback_timeout_ms` (global or per-step/per-matcher) to bound callback execution time.
+- callback matcher steps are runtime code only and are not JSON-serializable config payloads.
 
 ### Typical LXC SSH smoke pattern (`runCommand` + `runScript`)
 

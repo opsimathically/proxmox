@@ -5,6 +5,8 @@ import {
   proxmox_lxc_terminal_session_t,
 } from "../types/proxmox_service_types";
 import {
+  proxmox_expect_callback_matcher_result_t,
+  proxmox_expect_callback_metadata_t,
   proxmox_expect_match_result_t,
   proxmox_expect_matcher_t,
   proxmox_expect_run_script_input_t,
@@ -19,6 +21,9 @@ import {
 } from "../types/proxmox_expect_types";
 import {
   ProxmoxExpectAbortedError,
+  ProxmoxExpectCallbackError,
+  ProxmoxExpectCallbackResultError,
+  ProxmoxExpectCallbackTimeoutError,
   ProxmoxExpectPatternError,
   ProxmoxExpectSessionClosedError,
   ProxmoxExpectStepFailedError,
@@ -43,16 +48,26 @@ interface lxc_expect_service_input_i {
 interface proxmox_compiled_expect_matcher_i {
   matcher_id?: string;
   matcher_index: number;
-  matcher_kind: "string" | "regex";
-  match: (params: { buffer_text: string; capture_groups: boolean }) => {
+  matcher_kind: "string" | "regex" | "callback";
+  match: (params: {
+    buffer_text: string;
+    latest_chunk: string;
+    capture_groups: boolean;
+    elapsed_ms: number;
+    step_id?: string;
+    abort_signal?: AbortSignal;
+    callback_timeout_ms?: number;
+  }) => Promise<{
     matched: boolean;
     matched_text: string;
     capture_groups?: string[];
-  };
+    metadata?: proxmox_expect_callback_metadata_t;
+  }>;
 }
 
 interface proxmox_expect_wait_runtime_i {
   output_buffer: string;
+  latest_output_chunk: string;
   output_truncated: boolean;
   consumed_event_count: number;
 }
@@ -68,6 +83,7 @@ interface proxmox_expect_transcript_runtime_i {
 
 const DEFAULT_EXPECT_TIMEOUT_MS = 30000;
 const DEFAULT_EXPECT_POLL_INTERVAL_MS = 100;
+const DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS = 500;
 const DEFAULT_EXPECT_BUFFER_BYTES = 128 * 1024;
 const DEFAULT_EXPECT_MAX_EVENTS_PER_POLL = 256;
 const DEFAULT_EXPECT_MAX_SCRIPT_STEP_RETRIES = 0;
@@ -94,6 +110,7 @@ export class LxcExpectService {
       poll_interval_ms: normalized.poll_interval_ms,
       max_buffer_bytes: normalized.max_buffer_bytes,
       capture_groups: normalized.capture_groups,
+      callback_timeout_ms: normalized.callback_timeout_ms,
       fail_on_unexpected_output: normalized.fail_on_unexpected_output,
       unexpected_matchers: normalized.unexpected_matchers,
       stream_target: normalized.stream_target,
@@ -115,6 +132,7 @@ export class LxcExpectService {
       max_buffer_bytes: params.max_buffer_bytes,
       stream_target: params.stream_target,
       capture_groups: params.capture_groups,
+      callback_timeout_ms: params.callback_timeout_ms,
       fail_on_unexpected_output: params.fail_on_unexpected_output,
       unexpected_matchers: params.unexpected_matchers,
       abort_signal: params.abort_signal,
@@ -126,6 +144,7 @@ export class LxcExpectService {
     step: proxmox_expect_step_t;
     default_timeout_ms?: number;
     default_poll_interval_ms?: number;
+    default_callback_timeout_ms?: number;
     max_buffer_bytes?: number;
     stream_target?: proxmox_expect_stream_target_t;
     abort_signal?: AbortSignal;
@@ -135,6 +154,7 @@ export class LxcExpectService {
       step: params.step,
       default_timeout_ms: params.default_timeout_ms,
       default_poll_interval_ms: params.default_poll_interval_ms,
+      default_callback_timeout_ms: params.default_callback_timeout_ms,
       max_buffer_bytes: params.max_buffer_bytes,
       stream_target: params.stream_target,
       abort_signal: params.abort_signal,
@@ -219,6 +239,7 @@ export class LxcExpectService {
             step,
             default_timeout_ms: normalized_script.default_timeout_ms,
             default_poll_interval_ms: normalized_script.default_poll_interval_ms,
+            default_callback_timeout_ms: normalized_script.default_callback_timeout_ms,
             max_buffer_bytes: normalized_script.max_buffer_bytes,
             stream_target,
             abort_signal: params.abort_signal,
@@ -306,6 +327,7 @@ export class LxcExpectService {
     step: proxmox_expect_step_t;
     default_timeout_ms?: number;
     default_poll_interval_ms?: number;
+    default_callback_timeout_ms?: number;
     max_buffer_bytes?: number;
     stream_target?: proxmox_expect_stream_target_t;
     abort_signal?: AbortSignal;
@@ -316,6 +338,11 @@ export class LxcExpectService {
     const step_id = ValidateStepId(params.step.step_id, "step.step_id");
     const timeout_ms = params.step.timeout_ms ?? params.default_timeout_ms ?? DEFAULT_EXPECT_TIMEOUT_MS;
     const poll_interval_ms = params.step.poll_interval_ms ?? params.default_poll_interval_ms ?? DEFAULT_EXPECT_POLL_INTERVAL_MS;
+    const callback_timeout_ms = ResolveCallbackTimeoutMs({
+      raw_timeout_ms: params.step.callback_timeout_ms ?? params.default_callback_timeout_ms,
+      field_name: `${step_id}.callback_timeout_ms`,
+      fallback_timeout_ms: DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS,
+    });
     const max_buffer_bytes = params.max_buffer_bytes ?? DEFAULT_EXPECT_BUFFER_BYTES;
     const stream_target = ValidateStreamTarget(params.stream_target ?? "combined");
     const sensitive_input = params.step.sensitive_input === true;
@@ -370,9 +397,11 @@ export class LxcExpectService {
       poll_interval_ms,
       max_buffer_bytes,
       capture_groups: params.step.capture_groups === true,
+      callback_timeout_ms,
       fail_on_unexpected_output,
       unexpected_matchers: params.step.unexpected_matchers,
       stream_target,
+      step_id,
       abort_signal: params.abort_signal,
       on_output_chunk: params.transcript
         ? (output_chunk: string): void => {
@@ -427,8 +456,10 @@ export class LxcExpectService {
     max_buffer_bytes: number;
     stream_target: proxmox_expect_stream_target_t;
     capture_groups: boolean;
+    callback_timeout_ms?: number;
     fail_on_unexpected_output: boolean;
     unexpected_matchers?: proxmox_expect_matcher_t[];
+    step_id?: string;
     abort_signal?: AbortSignal;
     on_output_chunk?: (output_chunk: string) => void;
   }): Promise<proxmox_expect_wait_for_result_t> {
@@ -439,6 +470,7 @@ export class LxcExpectService {
       : [];
     const wait_runtime: proxmox_expect_wait_runtime_i = {
       output_buffer: "",
+      latest_output_chunk: "",
       output_truncated: false,
       consumed_event_count: 0,
     };
@@ -485,6 +517,7 @@ export class LxcExpectService {
         if (output_chunk.length === 0) {
           continue;
         }
+        wait_runtime.latest_output_chunk = output_chunk;
         params.on_output_chunk?.(output_chunk);
         const appended = AppendOutputBuffer({
           existing_output_buffer: wait_runtime.output_buffer,
@@ -495,11 +528,15 @@ export class LxcExpectService {
         wait_runtime.output_truncated = wait_runtime.output_truncated || appended.truncated;
 
         if (params.fail_on_unexpected_output && compiled_unexpected_matchers.length > 0) {
-          const unexpected_match = FindFirstMatch({
+          const unexpected_match = await FindFirstMatch({
             compiled_matchers: compiled_unexpected_matchers,
             output_buffer: wait_runtime.output_buffer,
+            latest_output_chunk: wait_runtime.latest_output_chunk,
             capture_groups: params.capture_groups,
             elapsed_ms: Date.now() - started_epoch_ms,
+            callback_timeout_ms: params.callback_timeout_ms,
+            step_id: params.step_id,
+            abort_signal: params.abort_signal,
           });
           if (unexpected_match !== undefined) {
             return {
@@ -516,11 +553,15 @@ export class LxcExpectService {
           }
         }
 
-        const expected_match = FindFirstMatch({
+        const expected_match = await FindFirstMatch({
           compiled_matchers: compiled_expect_matchers,
           output_buffer: wait_runtime.output_buffer,
+          latest_output_chunk: wait_runtime.latest_output_chunk,
           capture_groups: params.capture_groups,
           elapsed_ms: Date.now() - started_epoch_ms,
+          callback_timeout_ms: params.callback_timeout_ms,
+          step_id: params.step_id,
+          abort_signal: params.abort_signal,
         });
         if (expected_match !== undefined) {
           return {
@@ -584,6 +625,7 @@ function NormalizeWaitForInput(params: proxmox_expect_wait_for_input_t): {
   expect_matchers: proxmox_expect_matcher_t | proxmox_expect_matcher_t[];
   timeout_ms: number;
   poll_interval_ms: number;
+  callback_timeout_ms?: number;
   max_buffer_bytes: number;
   stream_target: proxmox_expect_stream_target_t;
   capture_groups: boolean;
@@ -603,12 +645,20 @@ function NormalizeWaitForInput(params: proxmox_expect_wait_for_input_t): {
     "max_buffer_bytes",
     128,
   );
+  const callback_timeout_ms = params.callback_timeout_ms === undefined
+    ? undefined
+    : ResolveCallbackTimeoutMs({
+      raw_timeout_ms: params.callback_timeout_ms,
+      field_name: "callback_timeout_ms",
+      fallback_timeout_ms: DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS,
+    });
   const stream_target = ValidateStreamTarget(params.stream_target ?? "combined");
   return {
     session_id,
     expect_matchers: params.expect,
     timeout_ms,
     poll_interval_ms,
+    callback_timeout_ms,
     max_buffer_bytes,
     stream_target,
     capture_groups: params.capture_groups === true,
@@ -623,6 +673,7 @@ function NormalizeScript(script: {
   start_step_id?: string;
   default_timeout_ms?: number;
   default_poll_interval_ms?: number;
+  default_callback_timeout_ms?: number;
   max_buffer_bytes?: number;
   max_step_retries?: number;
 }): {
@@ -630,6 +681,7 @@ function NormalizeScript(script: {
   start_step_id?: string;
   default_timeout_ms: number;
   default_poll_interval_ms: number;
+  default_callback_timeout_ms: number;
   max_buffer_bytes: number;
   max_step_retries: number;
 } {
@@ -652,6 +704,11 @@ function NormalizeScript(script: {
     "script.default_poll_interval_ms",
     10,
   );
+  const default_callback_timeout_ms = ResolveCallbackTimeoutMs({
+    raw_timeout_ms: script.default_callback_timeout_ms,
+    field_name: "script.default_callback_timeout_ms",
+    fallback_timeout_ms: DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS,
+  });
   const max_buffer_bytes = ValidatePositiveNumber(
     script.max_buffer_bytes ?? DEFAULT_EXPECT_BUFFER_BYTES,
     "script.max_buffer_bytes",
@@ -676,6 +733,7 @@ function NormalizeScript(script: {
     start_step_id: start_step_id?.length ? start_step_id : undefined,
     default_timeout_ms,
     default_poll_interval_ms,
+    default_callback_timeout_ms,
     max_buffer_bytes,
     max_step_retries,
   };
@@ -839,6 +897,25 @@ function ValidateNonNegativeInteger(raw_number: number, field_name: string): num
   return raw_number;
 }
 
+function ResolveCallbackTimeoutMs(params: {
+  raw_timeout_ms: number | undefined;
+  field_name: string;
+  fallback_timeout_ms: number;
+}): number {
+  const selected_timeout_ms = params.raw_timeout_ms ?? params.fallback_timeout_ms;
+  if (!Number.isFinite(selected_timeout_ms) || selected_timeout_ms < 25 || selected_timeout_ms > 60000) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: `${params.field_name} must be between 25 and 60000 milliseconds.`,
+      details: {
+        field: params.field_name,
+        value: String(selected_timeout_ms),
+      },
+    });
+  }
+  return Math.floor(selected_timeout_ms);
+}
+
 function ValidateStreamTarget(stream_target: proxmox_expect_stream_target_t): proxmox_expect_stream_target_t {
   if (stream_target !== "combined") {
     throw new ProxmoxValidationError({
@@ -870,6 +947,210 @@ function NormalizeMatcherList(
   return normalized;
 }
 
+function BuildCallbackInvocationSignature(params: {
+  buffer_text: string;
+  latest_chunk: string;
+}): string {
+  const buffer_suffix = params.buffer_text.slice(Math.max(0, params.buffer_text.length - 128));
+  const chunk_suffix = params.latest_chunk.slice(Math.max(0, params.latest_chunk.length - 64));
+  return `${params.buffer_text.length}:${buffer_suffix}|${params.latest_chunk.length}:${chunk_suffix}`;
+}
+
+async function RunCallbackMatcherWithTimeout(params: {
+  callback_matcher: (params: {
+    buffer_text: string;
+    latest_chunk: string;
+    elapsed_ms: number;
+    step_id?: string;
+    abort_signal?: AbortSignal;
+  }) => Promise<boolean | proxmox_expect_callback_matcher_result_t> | boolean | proxmox_expect_callback_matcher_result_t;
+  timeout_ms: number;
+  callback_input: {
+    buffer_text: string;
+    latest_chunk: string;
+    elapsed_ms: number;
+    step_id?: string;
+    abort_signal?: AbortSignal;
+  };
+  matcher_index: number;
+  matcher_id?: string;
+  step_id?: string;
+}): Promise<boolean | proxmox_expect_callback_matcher_result_t> {
+  return new Promise<boolean | proxmox_expect_callback_matcher_result_t>((resolve, reject) => {
+    const timeout_handle = setTimeout(() => {
+      reject(new ProxmoxExpectCallbackTimeoutError({
+        code: "proxmox.expect.callback_timeout",
+        message: "Callback matcher timed out.",
+        details: {
+          field: params.step_id
+            ? `${params.step_id}.expect[${params.matcher_index}]`
+            : `expect[${params.matcher_index}]`,
+          value: params.matcher_id,
+        },
+      }));
+    }, params.timeout_ms);
+
+    Promise.resolve(params.callback_matcher({
+      buffer_text: params.callback_input.buffer_text,
+      latest_chunk: params.callback_input.latest_chunk,
+      elapsed_ms: params.callback_input.elapsed_ms,
+      step_id: params.callback_input.step_id,
+      abort_signal: params.callback_input.abort_signal,
+    }))
+      .then((result) => {
+        clearTimeout(timeout_handle);
+        resolve(result);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(timeout_handle);
+        reject(error);
+      });
+  });
+}
+
+function NormalizeCallbackMatcherResult(params: {
+  raw_result: unknown;
+  matcher_index: number;
+  matcher_id?: string;
+  step_id?: string;
+  buffer_text: string;
+}): {
+  matched: boolean;
+  matched_text: string;
+  capture_groups?: string[];
+  metadata?: proxmox_expect_callback_metadata_t;
+} {
+  if (typeof params.raw_result === "boolean") {
+    return {
+      matched: params.raw_result,
+      matched_text: params.raw_result ? BuildExcerpt(params.buffer_text) : "",
+    };
+  }
+
+  if (!IsRecord(params.raw_result)) {
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher returned an invalid result type.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}]`
+          : `expect[${params.matcher_index}]`,
+        value: params.matcher_id,
+      },
+    });
+  }
+
+  const matched = params.raw_result.matched;
+  if (typeof matched !== "boolean") {
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher result must include boolean matched field.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}].matched`
+          : `expect[${params.matcher_index}].matched`,
+      },
+    });
+  }
+
+  const matched_text_raw = params.raw_result.matched_text;
+  if (matched_text_raw !== undefined && typeof matched_text_raw !== "string") {
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher result matched_text must be a string when provided.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}].matched_text`
+          : `expect[${params.matcher_index}].matched_text`,
+      },
+    });
+  }
+
+  const capture_groups_raw = params.raw_result.capture_groups;
+  if (
+    capture_groups_raw !== undefined
+    && (!Array.isArray(capture_groups_raw) || capture_groups_raw.some((entry) => typeof entry !== "string"))
+  ) {
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher result capture_groups must be an array of strings.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}].capture_groups`
+          : `expect[${params.matcher_index}].capture_groups`,
+      },
+    });
+  }
+
+  const metadata_raw = params.raw_result.metadata;
+  const metadata = ValidateCallbackMetadata({
+    metadata_raw,
+    matcher_index: params.matcher_index,
+    matcher_id: params.matcher_id,
+    step_id: params.step_id,
+  });
+  const capture_groups = capture_groups_raw === undefined
+    ? undefined
+    : capture_groups_raw as string[];
+
+  return {
+    matched,
+    matched_text: matched
+      ? matched_text_raw ?? BuildExcerpt(params.buffer_text)
+      : matched_text_raw ?? "",
+    capture_groups,
+    metadata,
+  };
+}
+
+function ValidateCallbackMetadata(params: {
+  metadata_raw: unknown;
+  matcher_index: number;
+  matcher_id?: string;
+  step_id?: string;
+}): proxmox_expect_callback_metadata_t | undefined {
+  if (params.metadata_raw === undefined) {
+    return undefined;
+  }
+  if (!IsRecord(params.metadata_raw)) {
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher metadata must be a record object.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}].metadata`
+          : `expect[${params.matcher_index}].metadata`,
+        value: params.matcher_id,
+      },
+    });
+  }
+
+  const normalized_metadata: proxmox_expect_callback_metadata_t = {};
+  for (const key_name of Object.keys(params.metadata_raw)) {
+    const value = params.metadata_raw[key_name];
+    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      normalized_metadata[key_name] = value;
+      continue;
+    }
+    throw new ProxmoxExpectCallbackResultError({
+      code: "proxmox.expect.callback_invalid_result",
+      message: "Callback matcher metadata values must be string/number/boolean/null.",
+      details: {
+        field: params.step_id
+          ? `${params.step_id}.expect[${params.matcher_index}].metadata.${key_name}`
+          : `expect[${params.matcher_index}].metadata.${key_name}`,
+        value: params.matcher_id,
+      },
+    });
+  }
+
+  return normalized_metadata;
+}
+
+function IsRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function CompileMatchers(matchers: proxmox_expect_matcher_t[]): proxmox_compiled_expect_matcher_i[] {
   return matchers.map((matcher, matcher_index) => CompileMatcher({
     matcher,
@@ -898,10 +1179,10 @@ function CompileMatcher(params: {
       matcher_id: matcher_id?.length ? matcher_id : undefined,
       matcher_index: params.matcher_index,
       matcher_kind: "string",
-      match: ({ buffer_text }): {
+      match: async ({ buffer_text }): Promise<{
         matched: boolean;
         matched_text: string;
-      } => {
+      }> => {
         const haystack = case_sensitive ? buffer_text : buffer_text.toLowerCase();
         const needle = case_sensitive ? value : value.toLowerCase();
         const match_index = haystack.indexOf(needle);
@@ -915,6 +1196,93 @@ function CompileMatcher(params: {
           matched: true,
           matched_text: buffer_text.slice(match_index, match_index + value.length),
         };
+      },
+    };
+  }
+
+  if (params.matcher.kind === "callback") {
+    if (typeof params.matcher.callback_matcher !== "function") {
+      throw new ProxmoxExpectPatternError({
+        code: "proxmox.expect.pattern_invalid",
+        message: "Callback matcher requires callback_matcher function.",
+        details: {
+          field: `matcher[${params.matcher_index}].callback_matcher`,
+        },
+      });
+    }
+    let previous_invocation_signature: string | undefined;
+    let previous_result: {
+      matched: boolean;
+      matched_text: string;
+      capture_groups?: string[];
+      metadata?: proxmox_expect_callback_metadata_t;
+    } | undefined;
+
+    return {
+      matcher_id: matcher_id?.length ? matcher_id : undefined,
+      matcher_index: params.matcher_index,
+      matcher_kind: "callback",
+      match: async (match_params): Promise<{
+        matched: boolean;
+        matched_text: string;
+        capture_groups?: string[];
+        metadata?: proxmox_expect_callback_metadata_t;
+      }> => {
+        const invocation_signature = BuildCallbackInvocationSignature({
+          buffer_text: match_params.buffer_text,
+          latest_chunk: match_params.latest_chunk,
+        });
+        if (invocation_signature === previous_invocation_signature && previous_result !== undefined) {
+          return previous_result;
+        }
+        ThrowIfAborted(match_params.abort_signal);
+        const callback_timeout_ms = ResolveCallbackTimeoutMs({
+          raw_timeout_ms: params.matcher.timeout_ms ?? match_params.callback_timeout_ms,
+          field_name: `matcher[${params.matcher_index}].timeout_ms`,
+          fallback_timeout_ms: DEFAULT_EXPECT_CALLBACK_TIMEOUT_MS,
+        });
+        let callback_result: boolean | proxmox_expect_callback_matcher_result_t;
+        try {
+          callback_result = await RunCallbackMatcherWithTimeout({
+            callback_matcher: params.matcher.callback_matcher,
+            timeout_ms: callback_timeout_ms,
+            callback_input: {
+              buffer_text: match_params.buffer_text,
+              latest_chunk: match_params.latest_chunk,
+              elapsed_ms: match_params.elapsed_ms,
+              step_id: match_params.step_id,
+              abort_signal: match_params.abort_signal,
+            },
+            matcher_index: params.matcher_index,
+            matcher_id: matcher_id?.length ? matcher_id : undefined,
+            step_id: match_params.step_id,
+          });
+        } catch (error) {
+          if (error instanceof ProxmoxExpectCallbackTimeoutError || error instanceof ProxmoxExpectCallbackResultError) {
+            throw error;
+          }
+          throw new ProxmoxExpectCallbackError({
+            code: "proxmox.expect.callback_failed",
+            message: "Callback matcher execution failed.",
+            details: {
+              field: match_params.step_id
+                ? `${match_params.step_id}.expect[${params.matcher_index}]`
+                : `expect[${params.matcher_index}]`,
+              value: matcher_id?.length ? matcher_id : undefined,
+            },
+            cause: error,
+          });
+        }
+        const normalized_result = NormalizeCallbackMatcherResult({
+          raw_result: callback_result,
+          matcher_index: params.matcher_index,
+          matcher_id: matcher_id?.length ? matcher_id : undefined,
+          step_id: match_params.step_id,
+          buffer_text: match_params.buffer_text,
+        });
+        previous_invocation_signature = invocation_signature;
+        previous_result = normalized_result;
+        return normalized_result;
       },
     };
   }
@@ -957,11 +1325,11 @@ function CompileMatcher(params: {
     matcher_id: matcher_id?.length ? matcher_id : undefined,
     matcher_index: params.matcher_index,
     matcher_kind: "regex",
-    match: ({ buffer_text, capture_groups }): {
+    match: async ({ buffer_text, capture_groups }): Promise<{
       matched: boolean;
       matched_text: string;
       capture_groups?: string[];
-    } => {
+    }> => {
       const match_result = compiled_regex.exec(buffer_text);
       if (!match_result) {
         return {
@@ -980,16 +1348,25 @@ function CompileMatcher(params: {
   };
 }
 
-function FindFirstMatch(params: {
+async function FindFirstMatch(params: {
   compiled_matchers: proxmox_compiled_expect_matcher_i[];
   output_buffer: string;
+  latest_output_chunk: string;
   capture_groups: boolean;
   elapsed_ms: number;
-}): proxmox_expect_match_result_t | undefined {
+  callback_timeout_ms?: number;
+  step_id?: string;
+  abort_signal?: AbortSignal;
+}): Promise<proxmox_expect_match_result_t | undefined> {
   for (const matcher of params.compiled_matchers) {
-    const test_result = matcher.match({
+    const test_result = await matcher.match({
       buffer_text: params.output_buffer,
+      latest_chunk: params.latest_output_chunk,
       capture_groups: params.capture_groups,
+      elapsed_ms: params.elapsed_ms,
+      step_id: params.step_id,
+      abort_signal: params.abort_signal,
+      callback_timeout_ms: params.callback_timeout_ms,
     });
     if (!test_result.matched) {
       continue;
@@ -1001,6 +1378,7 @@ function FindFirstMatch(params: {
       matcher_kind: matcher.matcher_kind,
       matched_text: test_result.matched_text,
       capture_groups: test_result.capture_groups,
+      metadata: test_result.metadata,
       elapsed_ms: params.elapsed_ms,
       buffer_excerpt: BuildExcerpt(params.output_buffer),
     };

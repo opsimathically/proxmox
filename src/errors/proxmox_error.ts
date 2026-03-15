@@ -24,6 +24,9 @@ export type proxmox_error_code_t =
   | "proxmox.ssh.session_io_failed"
   | "proxmox.expect.timeout"
   | "proxmox.expect.pattern_invalid"
+  | "proxmox.expect.callback_failed"
+  | "proxmox.expect.callback_timeout"
+  | "proxmox.expect.callback_invalid_result"
   | "proxmox.expect.session_closed"
   | "proxmox.expect.step_failed"
   | "proxmox.expect.aborted"
@@ -121,6 +124,30 @@ export class ProxmoxExpectPatternError extends ProxmoxError {
     super(params);
     this.name = "ProxmoxExpectPatternError";
     Object.setPrototypeOf(this, ProxmoxExpectPatternError.prototype);
+  }
+}
+
+export class ProxmoxExpectCallbackError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectCallbackError";
+    Object.setPrototypeOf(this, ProxmoxExpectCallbackError.prototype);
+  }
+}
+
+export class ProxmoxExpectCallbackTimeoutError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectCallbackTimeoutError";
+    Object.setPrototypeOf(this, ProxmoxExpectCallbackTimeoutError.prototype);
+  }
+}
+
+export class ProxmoxExpectCallbackResultError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectCallbackResultError";
+    Object.setPrototypeOf(this, ProxmoxExpectCallbackResultError.prototype);
   }
 }
 

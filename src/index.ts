@@ -3,6 +3,9 @@ export { ProxmoxError } from "./errors/proxmox_error";
 export type { proxmox_error_code_t, proxmox_error_details_t } from "./errors/proxmox_error";
 export {
   ProxmoxExpectAbortedError,
+  ProxmoxExpectCallbackError,
+  ProxmoxExpectCallbackResultError,
+  ProxmoxExpectCallbackTimeoutError,
   ProxmoxExpectPatternError,
   ProxmoxExpectSessionClosedError,
   ProxmoxExpectStepFailedError,

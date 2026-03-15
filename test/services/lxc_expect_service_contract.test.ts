@@ -2,6 +2,9 @@ import assert from "node:assert";
 import test from "node:test";
 import { LxcExpectService } from "../../src/services/lxc_expect_service";
 import {
+  ProxmoxExpectCallbackError,
+  ProxmoxExpectCallbackResultError,
+  ProxmoxExpectCallbackTimeoutError,
   ProxmoxExpectSessionClosedError,
   ProxmoxTerminalSessionError,
 } from "../../src/errors/proxmox_error";
@@ -212,6 +215,12 @@ class FakeExpectLxcService {
   }
 }
 
+async function SleepForCallbackTest(delay_ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delay_ms);
+  });
+}
+
 test("LxcExpectService waitFor returns matched when output contains expected text.", async () => {
   const fake_lxc_service = new FakeExpectLxcService();
   const session = await fake_lxc_service.openTerminalSession({
@@ -321,6 +330,164 @@ test("LxcExpectService runScript supports matcher-id branching.", async () => {
   assert.equal(script_result.succeeded, true);
   assert.equal(script_result.step_results.some((step) => step.step_id === "branch_b"), true);
   assert.equal(script_result.step_results.some((step) => step.step_id === "branch_a"), false);
+});
+
+test("LxcExpectService waitFor supports callback matcher success.", async () => {
+  const fake_lxc_service = new FakeExpectLxcService();
+  const session = await fake_lxc_service.openTerminalSession({
+    node_id: "node-a",
+    container_id: 100,
+  });
+  fake_lxc_service.pushOutput(session.session_id, "alpha\nbeta\n");
+
+  const expect_service = new LxcExpectService({
+    lxc_service: fake_lxc_service,
+  });
+
+  const result = await expect_service.waitFor({
+    session_id: session.session_id,
+    expect: {
+      kind: "callback",
+      callback_matcher: async ({ buffer_text }): Promise<boolean> => {
+        await SleepForCallbackTest(5);
+        return buffer_text.includes("beta");
+      },
+    },
+    timeout_ms: 500,
+    poll_interval_ms: 20,
+  });
+
+  assert.equal(result.status, "matched");
+  assert.equal(result.match?.matcher_kind, "callback");
+});
+
+test("LxcExpectService callback matcher timeout maps to typed timeout error.", async () => {
+  const fake_lxc_service = new FakeExpectLxcService();
+  const session = await fake_lxc_service.openTerminalSession({
+    node_id: "node-a",
+    container_id: 100,
+  });
+  fake_lxc_service.pushOutput(session.session_id, "trigger\n");
+
+  const expect_service = new LxcExpectService({
+    lxc_service: fake_lxc_service,
+  });
+
+  await assert.rejects(
+    async () => expect_service.waitFor({
+      session_id: session.session_id,
+      expect: {
+        kind: "callback",
+        callback_matcher: async (): Promise<boolean> => {
+          await SleepForCallbackTest(120);
+          return false;
+        },
+      },
+      callback_timeout_ms: 30,
+      timeout_ms: 300,
+      poll_interval_ms: 20,
+    }),
+    (error: unknown): boolean => error instanceof ProxmoxExpectCallbackTimeoutError,
+  );
+});
+
+test("LxcExpectService callback matcher thrown error maps to typed callback error.", async () => {
+  const fake_lxc_service = new FakeExpectLxcService();
+  const session = await fake_lxc_service.openTerminalSession({
+    node_id: "node-a",
+    container_id: 100,
+  });
+  fake_lxc_service.pushOutput(session.session_id, "boom\n");
+
+  const expect_service = new LxcExpectService({
+    lxc_service: fake_lxc_service,
+  });
+
+  await assert.rejects(
+    async () => expect_service.waitFor({
+      session_id: session.session_id,
+      expect: {
+        kind: "callback",
+        callback_matcher: async (): Promise<boolean> => {
+          throw new Error("callback exploded");
+        },
+      },
+      timeout_ms: 300,
+      poll_interval_ms: 20,
+    }),
+    (error: unknown): boolean => error instanceof ProxmoxExpectCallbackError,
+  );
+});
+
+test("LxcExpectService callback matcher invalid return maps to typed result error.", async () => {
+  const fake_lxc_service = new FakeExpectLxcService();
+  const session = await fake_lxc_service.openTerminalSession({
+    node_id: "node-a",
+    container_id: 100,
+  });
+  fake_lxc_service.pushOutput(session.session_id, "invalid\n");
+
+  const expect_service = new LxcExpectService({
+    lxc_service: fake_lxc_service,
+  });
+
+  await assert.rejects(
+    async () => expect_service.waitFor({
+      session_id: session.session_id,
+      expect: {
+        kind: "callback",
+        callback_matcher: async (): Promise<boolean> => (
+          { not_matched: true } as unknown as boolean
+        ),
+      },
+      timeout_ms: 300,
+      poll_interval_ms: 20,
+    }),
+    (error: unknown): boolean => error instanceof ProxmoxExpectCallbackResultError,
+  );
+});
+
+test("LxcExpectService supports mixed string/regex/callback matcher lists.", async () => {
+  const fake_lxc_service = new FakeExpectLxcService();
+  const session = await fake_lxc_service.openTerminalSession({
+    node_id: "node-a",
+    container_id: 100,
+  });
+  fake_lxc_service.pushOutput(session.session_id, "value=42\n");
+
+  const expect_service = new LxcExpectService({
+    lxc_service: fake_lxc_service,
+  });
+
+  const result = await expect_service.waitFor({
+    session_id: session.session_id,
+    expect: [
+      {
+        matcher_id: "string_miss",
+        kind: "string",
+        value: "does-not-exist",
+      },
+      {
+        matcher_id: "callback_hit",
+        kind: "callback",
+        callback_matcher: async ({ buffer_text }): Promise<{ matched: boolean; matched_text: string }> => ({
+          matched: buffer_text.includes("value=42"),
+          matched_text: "value=42",
+        }),
+      },
+      {
+        matcher_id: "regex_hit",
+        kind: "regex",
+        pattern: "value=\\d+",
+      },
+    ],
+    timeout_ms: 500,
+    poll_interval_ms: 20,
+  });
+
+  assert.equal(result.status, "matched");
+  assert.equal(result.match?.matcher_kind, "callback");
+  assert.equal(result.match?.matcher_id, "callback_hit");
 });
 
 test("LxcExpectService waitFor throws typed error when terminal closes mid-wait.", async () => {

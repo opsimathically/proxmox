@@ -35,6 +35,10 @@ class FakeRequestClient implements proxmox_request_client_i {
     };
   }
 
+  public isPrivilegedOperationEnabled(_operation: string): boolean {
+    return false;
+  }
+
   public async request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
     this.requests.push(params);
     if (this.error_to_throw !== undefined) {

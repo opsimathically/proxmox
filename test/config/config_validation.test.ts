@@ -183,6 +183,25 @@ test("ValidateConfig rejects unknown auth provider.", () => {
   });
 });
 
+test("ValidateConfig accepts privileged ticket auth configuration.", () => {
+  const config = BuildConfig();
+  config.clusters[0].nodes[0].privileged_auth = {
+    provider: "ticket",
+    username: "root@pam",
+    password: {
+      provider: "env",
+      env_var: "PROXMOX_TEST_PRIVILEGED_PASSWORD",
+    },
+    renew_skew_seconds: 120,
+  };
+
+  const resolved = ValidateConfig({ config });
+  assert.equal(
+    resolved.clusters[0].nodes[0].privileged_auth?.password.provider,
+    "env",
+  );
+});
+
 test("BuildConfigDiagnostics produces redacted startup summary and no secret values.", () => {
   const config = BuildConfig();
   const resolved = ValidateConfig({ config: config });

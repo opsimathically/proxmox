@@ -30,12 +30,15 @@ import {
   proxmox_cluster_t,
   proxmox_node_t,
   proxmox_auth_t,
+  proxmox_privileged_auth_t,
   proxmox_log_level_t,
   proxmox_protocol_t,
   proxmox_tls_version_t,
   proxmox_env_t,
   proxmox_auth_provider_t,
   proxmox_schema_version_t,
+  proxmox_lxc_shell_backend_t,
+  proxmox_ssh_shell_t,
 } from "../types/proxmox_config_types";
 
 export interface proxmox_config_diagnostic_logging_i {
@@ -80,6 +83,7 @@ export interface proxmox_config_diagnostics_i {
   profile_count: number;
   cluster_count: number;
   auth_provider_counts: Record<proxmox_auth_provider_t, number>;
+  privileged_auth_node_count: number;
 }
 
 export type proxmox_config_diagnostics_t = proxmox_config_diagnostics_i;
@@ -354,9 +358,13 @@ export function BuildConfigDiagnostics(params: proxmox_config_diagnostics_lookup
     vault: 0,
     sops: 0,
   };
+  let privileged_auth_node_count = 0;
   for (const proxmox_node of cluster.nodes) {
     const provider = proxmox_node.auth.provider;
     auth_provider_counts[provider] = auth_provider_counts[provider] + 1;
+    if (proxmox_node.privileged_auth !== undefined) {
+      privileged_auth_node_count += 1;
+    }
   }
 
   return {
@@ -390,6 +398,7 @@ export function BuildConfigDiagnostics(params: proxmox_config_diagnostics_lookup
     profile_count: params.config.profiles.length,
     cluster_count: params.config.clusters.length,
     auth_provider_counts,
+    privileged_auth_node_count,
   };
 }
 
@@ -418,6 +427,7 @@ export function EmitStartupDiagnostics(params: proxmox_config_diagnostics_lookup
       poll_timeout_ms: diagnostics.task_poller.poll_timeout_ms,
       max_poll_failures: diagnostics.task_poller.max_poll_failures,
     },
+    privileged_auth_node_count: diagnostics.privileged_auth_node_count,
     transport: diagnostics.transport,
     logging: {
       level: diagnostics.logging.level,
@@ -850,6 +860,25 @@ function ValidateNodes(raw_nodes: unknown, path: string): proxmox_node_t[] {
         ),
         `${path}[${index}].auth`,
       ),
+      privileged_auth: ValidatePrivilegedAuth(
+        MaybeObject<proxmox_privileged_auth_t>(
+          LoadOptionalField(node_data, "privileged_auth", `${path}[${index}]`),
+        ),
+        `${path}[${index}].privileged_auth`,
+      ),
+      shell_backend: ValidateShellBackend(
+        EnsureOptionalString(
+          LoadOptionalField(node_data, "shell_backend", `${path}[${index}]`),
+          `${path}[${index}].shell_backend`,
+        ),
+        `${path}[${index}].shell_backend`,
+      ),
+      ssh_shell: ValidateSshShell(
+        MaybeObject<proxmox_ssh_shell_t>(
+          LoadOptionalField(node_data, "ssh_shell", `${path}[${index}]`),
+        ),
+        `${path}[${index}].ssh_shell`,
+      ),
       verify_tls: EnsureOptionalBoolean(
         LoadOptionalField(node_data, "verify_tls", `${path}[${index}]`),
         `${path}[${index}].verify_tls`,
@@ -869,6 +898,20 @@ function ValidateNodes(raw_nodes: unknown, path: string): proxmox_node_t[] {
           value: proxmox_node.id,
         },
       });
+    }
+
+    if (proxmox_node.shell_backend === "ssh_pct" && proxmox_node.ssh_shell === undefined) {
+      throw new ProxmoxError({
+        code: "proxmox.config.validation",
+        message: "ssh_shell must be configured when shell_backend is ssh_pct.",
+        details: {
+          field: `${path}[${index}].ssh_shell`,
+          value: proxmox_node.id,
+        },
+      });
+    }
+    if (proxmox_node.shell_backend === undefined && proxmox_node.ssh_shell !== undefined) {
+      proxmox_node.shell_backend = "ssh_pct";
     }
 
     seen_node_ids.add(proxmox_node.id);
@@ -904,6 +947,172 @@ function ValidateAuth(raw_auth: Record<string, unknown>, path: string): proxmox_
     token_id_override: EnsureOptionalString(
       LoadOptionalField(raw_auth, "token_id_override", path),
       `${path}.token_id_override`,
+    ),
+  };
+}
+
+function ValidatePrivilegedAuth(
+  raw_privileged_auth: proxmox_privileged_auth_t | undefined,
+  path: string,
+): proxmox_privileged_auth_t | undefined {
+  if (raw_privileged_auth === undefined) {
+    return undefined;
+  }
+  const provider = EnsureString(
+    LoadField(raw_privileged_auth as unknown as Record<string, unknown>, "provider", path),
+    `${path}.provider`,
+    true,
+  );
+  if (provider !== "ticket") {
+    throw new ProxmoxError({
+      code: "proxmox.config.validation",
+      message: "privileged_auth.provider must be ticket.",
+      details: {
+        field: `${path}.provider`,
+        value: provider,
+      },
+    });
+  }
+
+  const username = EnsureString(
+    LoadField(raw_privileged_auth as unknown as Record<string, unknown>, "username", path),
+    `${path}.username`,
+    true,
+  );
+  const password_object = EnsureObject(
+    LoadField(raw_privileged_auth as unknown as Record<string, unknown>, "password", path),
+    `${path}.password`,
+  );
+  const password = ValidateAuth(password_object, `${path}.password`);
+  const renew_skew_seconds = EnsureOptionalNumber(
+    LoadOptionalField(raw_privileged_auth as unknown as Record<string, unknown>, "renew_skew_seconds", path),
+    `${path}.renew_skew_seconds`,
+    { min: 0, integer: true },
+  );
+
+  return {
+    provider: "ticket",
+    username,
+    password,
+    renew_skew_seconds,
+  };
+}
+
+function ValidateShellBackend(
+  raw_shell_backend: string | undefined,
+  path: string,
+): proxmox_lxc_shell_backend_t | undefined {
+  if (raw_shell_backend === undefined) {
+    return undefined;
+  }
+  if (raw_shell_backend === "ssh_pct") {
+    return raw_shell_backend;
+  }
+  throw new ProxmoxError({
+    code: "proxmox.config.validation",
+    message: "shell_backend must be ssh_pct.",
+    details: {
+      field: path,
+      value: raw_shell_backend,
+    },
+  });
+}
+
+function ValidateSshShell(
+  raw_ssh_shell: proxmox_ssh_shell_t | undefined,
+  path: string,
+): proxmox_ssh_shell_t | undefined {
+  if (raw_ssh_shell === undefined) {
+    return undefined;
+  }
+  const ssh_shell_record = raw_ssh_shell as unknown as Record<string, unknown>;
+  const username = EnsureString(
+    LoadField(ssh_shell_record, "username", path),
+    `${path}.username`,
+    true,
+  );
+  const host = EnsureOptionalString(
+    LoadOptionalField(ssh_shell_record, "host", path),
+    `${path}.host`,
+  );
+  const port = EnsureOptionalNumber(
+    LoadOptionalField(ssh_shell_record, "port", path),
+    `${path}.port`,
+    {
+      min: 1,
+      max: 65535,
+      integer: true,
+    },
+  );
+  const password_auth = MaybeObject<proxmox_auth_t>(
+    LoadOptionalField(ssh_shell_record, "password_auth", path),
+  );
+  const private_key_auth = MaybeObject<proxmox_auth_t>(
+    LoadOptionalField(ssh_shell_record, "private_key_auth", path),
+  );
+  const private_key_passphrase_auth = MaybeObject<proxmox_auth_t>(
+    LoadOptionalField(ssh_shell_record, "private_key_passphrase_auth", path),
+  );
+  const normalized_password_auth = password_auth === undefined
+    ? undefined
+    : ValidateAuth(password_auth as unknown as Record<string, unknown>, `${path}.password_auth`);
+  const normalized_private_key_auth = private_key_auth === undefined
+    ? undefined
+    : ValidateAuth(private_key_auth as unknown as Record<string, unknown>, `${path}.private_key_auth`);
+  const normalized_passphrase_auth = private_key_passphrase_auth === undefined
+    ? undefined
+    : ValidateAuth(private_key_passphrase_auth as unknown as Record<string, unknown>, `${path}.private_key_passphrase_auth`);
+  if (normalized_password_auth === undefined && normalized_private_key_auth === undefined) {
+    throw new ProxmoxError({
+      code: "proxmox.config.validation",
+      message: "ssh_shell must define password_auth or private_key_auth.",
+      details: {
+        field: path,
+      },
+    });
+  }
+  return {
+    host,
+    port,
+    username,
+    password_auth: normalized_password_auth,
+    private_key_auth: normalized_private_key_auth,
+    private_key_passphrase_auth: normalized_passphrase_auth,
+    connect_timeout_ms: EnsureOptionalNumber(
+      LoadOptionalField(ssh_shell_record, "connect_timeout_ms", path),
+      `${path}.connect_timeout_ms`,
+      {
+        min: 250,
+        max: 300000,
+      },
+    ),
+    command_timeout_ms: EnsureOptionalNumber(
+      LoadOptionalField(ssh_shell_record, "command_timeout_ms", path),
+      `${path}.command_timeout_ms`,
+      {
+        min: 250,
+        max: 300000,
+      },
+    ),
+    idle_timeout_ms: EnsureOptionalNumber(
+      LoadOptionalField(ssh_shell_record, "idle_timeout_ms", path),
+      `${path}.idle_timeout_ms`,
+      {
+        min: 250,
+        max: 3600000,
+      },
+    ),
+    strict_host_key: EnsureOptionalBoolean(
+      LoadOptionalField(ssh_shell_record, "strict_host_key", path),
+      `${path}.strict_host_key`,
+    ),
+    host_fingerprint_sha256: EnsureOptionalString(
+      LoadOptionalField(ssh_shell_record, "host_fingerprint_sha256", path),
+      `${path}.host_fingerprint_sha256`,
+    ),
+    known_hosts_path: EnsureOptionalString(
+      LoadOptionalField(ssh_shell_record, "known_hosts_path", path),
+      `${path}.known_hosts_path`,
     ),
   };
 }

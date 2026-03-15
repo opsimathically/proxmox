@@ -25,6 +25,7 @@ import { ClusterService } from "../services/cluster_service";
 import { NodeService } from "../services/node_service";
 import { VmService } from "../services/vm_service";
 import { LxcService } from "../services/lxc_service";
+import { LxcExpectService } from "../services/lxc_expect_service";
 import { AccessService } from "../services/access_service";
 import { StorageService } from "../services/storage_service";
 import { PoolService } from "../services/pool_service";
@@ -39,6 +40,7 @@ import { LxcClusterPreflightHelper } from "../helpers/lxc_cluster_preflight_help
 import { LxcDestroyHelper } from "../helpers/lxc_destroy_helper";
 import { ProxmoxHelpers } from "../helpers/proxmox_helpers";
 import { ProxmoxError } from "../errors/proxmox_error";
+import { SessionTicketAuthProvider } from "../core/auth/session_ticket_auth_provider";
 
 export interface proxmox_client_input_i {
   config: proxmoxlib_resolved_config_t;
@@ -72,6 +74,7 @@ export class ProxmoxClient {
   public readonly node_service: NodeService;
   public readonly vm_service: VmService;
   public readonly lxc_service: LxcService;
+  public readonly lxc_expect_service: LxcExpectService;
   public readonly access_service: AccessService;
   public readonly storage_service: StorageService;
   public readonly pool_service: PoolService;
@@ -154,6 +157,9 @@ export class ProxmoxClient {
         timeout_ms: this.profile.task_poller.poll_timeout_ms,
         max_poll_failures: this.profile.task_poller.max_poll_failures,
       },
+    });
+    this.lxc_expect_service = LxcExpectService.fromLxcService({
+      lxc_service: this.lxc_service,
     });
     this.access_service = new AccessService({
       request_client: this.request_client,
@@ -266,6 +272,22 @@ export class ProxmoxClient {
     const nodes = this.cluster.nodes.map((proxmox_node: proxmox_node_t) => {
       const verify_tls = proxmox_node.verify_tls ?? this.profile.transport.verify_tls;
       const ca_bundle_path = proxmox_node.ca_bundle_path ?? this.profile.transport.ca_bundle_path;
+      const privileged_ticket_provider = proxmox_node.privileged_auth?.provider === "ticket"
+        ? new SessionTicketAuthProvider({
+          username: proxmox_node.privileged_auth.username,
+          password_auth: proxmox_node.privileged_auth.password,
+          protocol: proxmox_node.protocol ?? "https",
+          host: proxmox_node.host,
+          port: proxmox_node.port,
+          verify_tls,
+          ca_bundle_path,
+          request_timeout_ms: this.profile.transport.request_timeout_ms,
+          keep_alive_ms: this.profile.transport.keep_alive_ms,
+          transport: this.transport,
+          parser: this.parser,
+          renew_skew_seconds: proxmox_node.privileged_auth.renew_skew_seconds,
+        })
+        : undefined;
       return BuildRequestClientNode({
         node_id: proxmox_node.id,
         host: proxmox_node.host,
@@ -273,6 +295,9 @@ export class ProxmoxClient {
         port: proxmox_node.port,
         verify_tls,
         ca_bundle_path,
+        privileged_ticket_provider,
+        shell_backend: proxmox_node.shell_backend,
+        ssh_shell: proxmox_node.ssh_shell,
         auth: proxmox_node.auth,
         token_id: proxmox_node.token_id,
       });

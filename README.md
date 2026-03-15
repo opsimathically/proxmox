@@ -2,7 +2,16 @@
 
 TypeScript SDK for interacting with Proxmox VE clusters with typed service contracts, runtime config validation, and secure-by-default transport/auth behavior.
 
-## What this library is
+## What changed
+
+- LXC shell operations are now SSH-only via backend mode `ssh_pct`.
+- One-off command execution runs through `pct exec`.
+- Interactive shell sessions run through `pct enter` with PTY lifecycle methods.
+- Legacy `termproxy`/`vncwebsocket` terminal paths are removed.
+- Legacy `privileged_fallback` / `node_execute` fallback config is removed from active SDK flow.
+- API auth for non-shell SDK services remains unchanged (token/session providers).
+
+## Architecture overview
 
 This SDK provides typed clients for common Proxmox domains:
 
@@ -24,6 +33,14 @@ Design goals:
 - strict config parsing and validation at startup
 - secure defaults (`verify_tls` enabled, explicit auth providers, redaction-oriented diagnostics)
 - high-level helper composition for common workflows (for example, cluster preflight/placement, LXC create/destroy, maintenance planning)
+
+Runtime layers:
+
+- config layer: schema parsing, profile/cluster/node resolution, secret-source wiring
+- transport layer: typed request execution, timeout/retry policy, typed error mapping
+- domain service layer: datacenter/cluster/node/vm/lxc/access/storage/ha/task/dr APIs
+- shell layer: SSH-only `ssh_pct` backend for LXC command/session control (`pct exec`, `pct enter`)
+- expect layer: deterministic send/wait/branch workflows over interactive terminal sessions
 
 ## Feature/capability matrix
 
@@ -108,7 +125,27 @@ Design goals:
 - `migrateContainer`
 - `snapshotContainer`
 - `restoreContainer`
+- `runCommand` (SSH `pct exec`)
+- `openTerminalSession` (SSH `pct enter`)
+- `sendTerminalInput`
+- `resizeTerminal`
+- `readTerminalEvents`
+- `getTerminalSession`
+- `closeTerminalSession`
 - `waitForTask`
+
+### LXC shell capabilities (SSH-only)
+
+- one-off command execution: `runCommand`
+- interactive terminal lifecycle:
+  - `openTerminalSession`
+  - `sendTerminalInput`
+  - `resizeTerminal`
+  - `readTerminalEvents`
+  - `getTerminalSession`
+  - `closeTerminalSession`
+
+LXC shell methods require node config with `shell_backend: "ssh_pct"` and valid `ssh_shell`.
 
 ### `helpers` (`ProxmoxHelpers`)
 
@@ -227,6 +264,38 @@ Minimal realistic config:
       ]
     }
   ]
+}
+```
+
+### SSH shell backend node configuration
+
+Use this under each node that should support LXC command/shell control:
+
+```json
+{
+  "id": "g75",
+  "host": "192.168.11.252",
+  "protocol": "https",
+  "port": 8006,
+  "token_id": "root@pam!roottoken",
+  "auth": {
+    "provider": "file",
+    "file_path": "/home/tourist/environment_files/proxmoxlib/api.key"
+  },
+  "shell_backend": "ssh_pct",
+  "ssh_shell": {
+    "host": "192.168.11.252",
+    "port": 22,
+    "username": "root",
+    "password_auth": {
+      "provider": "env",
+      "env_var": "PROXMOX_NODE_SSH_PASSWORD"
+    },
+    "connect_timeout_ms": 10000,
+    "command_timeout_ms": 60000,
+    "idle_timeout_ms": 180000,
+    "strict_host_key": true
+  }
 }
 ```
 
@@ -1049,6 +1118,12 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_LXC_DESTROY_RUN` (set true to run helper destroy demo)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_CONTAINER_ID` (optional destroy target; falls back to helper-created container when available)
 - `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
+- `PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN` (set true to run `lxc_expect_service.runScript` smoke flow against the configured LXC smoke target)
+- `PROXMOX_EXAMPLE_LXC_SMOKE_RUN` (optional boolean, default: `true`, enables non-destructive LXC shell smoke flow)
+- `PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID` (optional smoke node override, default: `g75`)
+- `PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID` (optional smoke container override, default: `100`)
+- `PROXMOX_EXAMPLE_LXC_SMOKE_TIMEOUT_MS` (optional positive integer timeout for smoke operations, default: `30000`)
+- `PROXMOX_NODE_SSH_PASSWORD` (required when `ssh_shell.password_auth.provider` is `env`)
 - `PROXMOX_EXAMPLE_LXC_BULK_RUN` (set true to run bulk helper demo)
 - `PROXMOX_EXAMPLE_LXC_BULK_COUNT` (bulk batch size, default: `10`)
 - `PROXMOX_EXAMPLE_LXC_BULK_START_ID` (bulk start container ID, default: `9400`)
@@ -1144,6 +1219,300 @@ try {
 }
 ```
 
+## LXC command execution and interactive terminal usage (SSH `ssh_pct`)
+
+One-off command execution with typed result:
+
+```ts
+import { ProxmoxClient, ProxmoxCommandExitError } from '@opsimathically/proxmox';
+
+const client = ProxmoxClient.fromPath();
+
+try {
+  const command_result = await client.lxc_service.runCommand({
+    node_id: 'pve1',
+    container_id: 101,
+    command_argv: ['uname', '-a'],
+    timeout_ms: 30000,
+    max_output_bytes: 512 * 1024
+  });
+
+  console.log(command_result.exit_code, command_result.stdout);
+} catch (error) {
+  if (error instanceof ProxmoxCommandExitError) {
+    console.error('Command failed with non-zero exit:', error.details);
+  }
+}
+```
+
+Interactive terminal lifecycle:
+
+```ts
+const session = await client.lxc_service.openTerminalSession({
+  node_id: 'pve1',
+  container_id: 101,
+  shell_mode: true,
+  shell_command: '/bin/bash -il',
+  columns: 140,
+  rows: 40
+});
+
+await client.lxc_service.sendTerminalInput({
+  session_id: session.session_id,
+  input_text: 'ls -la\\n'
+});
+
+const terminal_events = await client.lxc_service.readTerminalEvents({
+  session_id: session.session_id,
+  max_events: 100
+});
+
+for (const event_record of terminal_events) {
+  if (event_record.event_type === 'output') {
+    process.stdout.write(event_record.output_chunk ?? '');
+  }
+}
+
+await client.lxc_service.resizeTerminal({
+  session_id: session.session_id,
+  columns: 180,
+  rows: 48
+});
+
+await client.lxc_service.closeTerminalSession({
+  session_id: session.session_id,
+  reason: 'operator_complete'
+});
+```
+
+## Expect-style interactive scripting
+
+`LxcExpectService` provides deterministic send/wait/branch scripting over SSH-backed LXC terminal sessions.
+
+### Simple `sendAndExpect`
+
+```ts
+const session = await client.lxc_service.openTerminalSession({
+  node_id: 'g75',
+  container_id: 100,
+  shell_mode: true,
+  shell_command: '/bin/sh -il'
+});
+
+const wait_result = await client.lxc_expect_service.sendAndExpect({
+  session_id: session.session_id,
+  send_input: 'echo SDK_EXPECT_OK\\n',
+  expect: {
+    kind: 'string',
+    value: 'SDK_EXPECT_OK'
+  },
+  timeout_ms: 15000
+});
+
+console.log(wait_result.status, wait_result.match?.matched_text);
+```
+
+### Multi-step `runScript` with branching
+
+```ts
+const script_result = await client.lxc_expect_service.runScript({
+  target: {
+    open_terminal_input: {
+      node_id: 'g75',
+      container_id: 100,
+      shell_mode: true,
+      shell_command: '/bin/sh -il'
+    },
+    close_on_finish: true
+  },
+  script: {
+    default_timeout_ms: 30000,
+    default_poll_interval_ms: 100,
+    steps: [
+      {
+        step_id: 'detect_mode',
+        send_input: 'echo MODE=B\\n',
+        expect: [
+          { matcher_id: 'mode_a', kind: 'string', value: 'MODE=A' },
+          { matcher_id: 'mode_b', kind: 'string', value: 'MODE=B' }
+        ],
+        next_step_by_matcher_id: {
+          mode_a: 'branch_a',
+          mode_b: 'branch_b'
+        }
+      },
+      {
+        step_id: 'branch_a',
+        send_input: 'echo BRANCH_A\\n',
+        expect: { kind: 'string', value: 'BRANCH_A' }
+      },
+      {
+        step_id: 'branch_b',
+        send_input: 'echo BRANCH_B\\n',
+        expect: { kind: 'string', value: 'BRANCH_B' }
+      }
+    ]
+  }
+});
+
+console.log(script_result.succeeded, script_result.failed_step_id);
+```
+
+### Timeout/failure handling
+
+```ts
+import {
+  ProxmoxExpectTimeoutError,
+  ProxmoxExpectSessionClosedError,
+  ProxmoxExpectStepFailedError
+} from '@opsimathically/proxmox';
+
+try {
+  const wait_result = await client.lxc_expect_service.waitFor({
+    session_id: 'existing-session-id',
+    expect: { kind: 'regex', pattern: 'ready>' },
+    timeout_ms: 5000
+  });
+
+  if (wait_result.status !== 'matched') {
+    throw new Error(`Expect failed with status: ${wait_result.status}`);
+  }
+} catch (error) {
+  if (error instanceof ProxmoxExpectTimeoutError) {
+    console.error('Expect timeout');
+  } else if (error instanceof ProxmoxExpectSessionClosedError) {
+    console.error('Session closed unexpectedly');
+  } else if (error instanceof ProxmoxExpectStepFailedError) {
+    console.error('Expect step failed');
+  } else {
+    throw error;
+  }
+}
+```
+
+Notes:
+
+- use `sensitive_input: true` on script steps to redact input in transcript.
+- limit transcript growth with `script.max_buffer_bytes`.
+- `stream_target` currently supports `combined` only for SSH terminal events.
+
+### Typical LXC SSH smoke pattern (`runCommand` + `runScript`)
+
+```ts
+import {
+  ProxmoxClient,
+  ProxmoxError,
+  ProxmoxExpectSessionClosedError,
+  ProxmoxExpectTimeoutError
+} from '@opsimathically/proxmox';
+
+async function Main(): Promise<void> {
+  const client = ProxmoxClient.fromPath({
+    profile_name: process.env.PROXMOXLIB_PROFILE ?? 'default'
+  });
+
+  const node_id = process.env.PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID ?? 'g75';
+  const container_id = process.env.PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID ?? '100';
+  const timeout_ms = Number(process.env.PROXMOX_EXAMPLE_LXC_SMOKE_TIMEOUT_MS ?? '30000');
+
+  const command_result = await client.lxc_service.runCommand({
+    node_id,
+    container_id,
+    command_argv: ['hostname'],
+    timeout_ms,
+    fail_on_non_zero_exit: true
+  });
+  console.info('[example] command_result', {
+    execution_mode: command_result.execution_mode,
+    exit_code: command_result.exit_code,
+    duration_ms: command_result.duration_ms
+  });
+
+  const script_result = await client.lxc_expect_service.runScript({
+    target: {
+      open_terminal_input: {
+        node_id,
+        container_id,
+        shell_mode: false,
+        columns: 120,
+        rows: 32,
+        timeout_ms
+      },
+      close_on_finish: true
+    },
+    script: {
+      default_timeout_ms: timeout_ms,
+      default_poll_interval_ms: 100,
+      steps: [
+        {
+          step_id: 'prompt_ready',
+          send_input: '\n',
+          expect: { kind: 'string', value: '#' },
+          fail_on_timeout: true
+        },
+        {
+          step_id: 'uid_zero',
+          send_input: 'id -u\n',
+          expect: { kind: 'regex', pattern: '(?:^|\\s)0(?:\\s|$)' },
+          fail_on_timeout: true
+        }
+      ]
+    }
+  });
+
+  console.info('[example] expect_result', {
+    succeeded: script_result.succeeded,
+    step_count: script_result.step_results.length
+  });
+}
+
+Main().catch((error: unknown) => {
+  if (error instanceof ProxmoxExpectTimeoutError) {
+    console.error('[example] expect_timeout');
+    process.exit(1);
+  }
+  if (error instanceof ProxmoxExpectSessionClosedError) {
+    console.error('[example] expect_session_closed');
+    process.exit(1);
+  }
+  if (error instanceof ProxmoxError) {
+    console.error('[example] proxmox_error', {
+      code: error.code,
+      message: error.message,
+      details: error.details
+    });
+    process.exit(1);
+  }
+  console.error('[example] unexpected_error');
+  process.exit(1);
+});
+```
+
+## Migration notes (legacy terminal/fallback removal)
+
+- remove legacy websocket/termproxy terminal assumptions from your app flow.
+- remove `profiles[].privileged_fallback` from `proxmoxlib.json`.
+- remove `clusters[].nodes[].privileged_auth` if it was only for old `node_execute` fallback.
+- keep node `auth` (API token source) for non-shell APIs.
+- add/keep node `shell_backend: "ssh_pct"` and `ssh_shell` for LXC shell methods.
+
+## Operational prerequisites (SSH LXC shell)
+
+- SDK runtime can SSH to target Proxmox node(s).
+- `pct` is available on target nodes.
+- SSH identity has permission to run `pct exec` / `pct enter` for target containers.
+- LXC target node/container IDs are valid and reachable.
+- secrets are sourced externally (`env`, `file`, `vault`, `sops`), never hardcoded.
+- production deployments use strict host verification (`strict_host_key`, fingerprint or known-hosts).
+
+## Known limitations / next steps
+
+- interactive terminal events are currently consumed as a combined stream; do not assume strict stdout/stderr separation in interactive mode.
+- prompt/echo behavior depends on PTY/shell state; expect matchers should target stable markers instead of strict line positions.
+- keep expect transcript sizes bounded (`max_buffer_bytes`) for long sessions.
+- enforce host verification (`strict_host_key: true` + maintained fingerprints) for non-lab usage.
+- additional automated tests for expect branching/cancellation/long-session buffering are recommended.
+
 ## Testing and development workflow
 
 Run tests:
@@ -1188,6 +1557,18 @@ Test coverage structure (high level):
 - do not log raw authorization headers or token values.
 - use `ca_bundle_path` for private/internal CAs instead of disabling TLS verification.
 - run destructive helper flows (`teardownAndDestroy*`, `drainNode`, bulk operations) with `dry_run` first.
+- keep SSH credentials out of source control and CI logs.
+- avoid logging full shell command payloads if they can include sensitive values.
+
+## SSH LXC shell backend notes
+
+- LXC shell execution is SSH-only; legacy `termproxy`/`vncwebsocket` paths are not supported.
+- for true non-VNC LXC shell control, configure node `shell_backend` as `ssh_pct`.
+- `ssh_pct` uses SSH to the Proxmox node and executes `pct exec`/`pct enter`.
+- configure `ssh_shell` per node with `username` and at least one auth source (`password_auth` or `private_key_auth`).
+- keep SSH credentials in secret sources (`env`, `file`, `sops`, `vault`), never in code.
+- prefer strict host verification with `strict_host_key` and `host_fingerprint_sha256`.
+- ensure target node allows the configured SSH auth method and has `pct` available in path.
 
 ## Public package surface
 

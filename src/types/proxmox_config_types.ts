@@ -4,6 +4,7 @@ export type proxmox_env_t = "prod" | "stage" | "dev";
 export type proxmox_protocol_t = "https" | "http";
 export type proxmox_auth_provider_t = "env" | "file" | "vault" | "sops";
 export type proxmox_tls_version_t = "TLSv1.2" | "TLSv1.3";
+export type proxmox_lxc_shell_backend_t = "ssh_pct";
 
 export interface proxmox_auth_i {
   provider: proxmox_auth_provider_t;
@@ -15,6 +16,32 @@ export interface proxmox_auth_i {
 
 export type proxmox_auth_t = proxmox_auth_i;
 
+export interface proxmox_privileged_auth_i {
+  provider: "ticket";
+  username: string;
+  password: proxmox_auth_t;
+  renew_skew_seconds?: number;
+}
+
+export type proxmox_privileged_auth_t = proxmox_privileged_auth_i;
+
+export interface proxmox_ssh_shell_i {
+  host?: string;
+  port?: number;
+  username: string;
+  password_auth?: proxmox_auth_t;
+  private_key_auth?: proxmox_auth_t;
+  private_key_passphrase_auth?: proxmox_auth_t;
+  connect_timeout_ms?: number;
+  command_timeout_ms?: number;
+  idle_timeout_ms?: number;
+  strict_host_key?: boolean;
+  host_fingerprint_sha256?: string;
+  known_hosts_path?: string;
+}
+
+export type proxmox_ssh_shell_t = proxmox_ssh_shell_i;
+
 export interface proxmox_node_i {
   id: string;
   hostname: string;
@@ -23,6 +50,9 @@ export interface proxmox_node_i {
   protocol?: proxmox_protocol_t;
   token_id: string;
   auth: proxmox_auth_t;
+  privileged_auth?: proxmox_privileged_auth_t;
+  shell_backend?: proxmox_lxc_shell_backend_t;
+  ssh_shell?: proxmox_ssh_shell_t;
   verify_tls?: boolean;
   ca_bundle_path?: string;
 }

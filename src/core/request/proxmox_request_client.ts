@@ -4,14 +4,25 @@ import {
   proxmox_http_query_t,
   proxmox_http_request_t,
 } from "../../types/proxmox_http_types";
-import { proxmox_retry_policy_t } from "../../types/proxmox_config_types";
+import {
+  proxmox_retry_policy_t,
+  proxmox_lxc_shell_backend_t,
+  proxmox_ssh_shell_t,
+} from "../../types/proxmox_config_types";
 import { proxmox_api_parser_i } from "../parser/proxmox_api_parser";
 import { prox_mox_http_transport_i } from "../http/proxmox_http_transport_i";
 import { BuildProxmoxUrl } from "../http/http_url_builder";
 import { BuildAuthProvider } from "../auth/proxmox_auth_factory";
 import { proxmox_auth_provider_i } from "../auth/auth_provider_i";
-import { MapHttpStatusToProxmoxError, ProxmoxValidationError } from "../../errors/proxmox_error";
+import {
+  MapHttpStatusToProxmoxError,
+  ProxmoxAuthError,
+  ProxmoxError,
+  ProxmoxPrivilegedFallbackError,
+  ProxmoxValidationError,
+} from "../../errors/proxmox_error";
 import { EvaluateRetry } from "../retry/retry_policy";
+import { SessionTicketAuthProvider } from "../auth/session_ticket_auth_provider";
 
 export interface proxmox_node_connection_i {
   node_id: string;
@@ -21,6 +32,9 @@ export interface proxmox_node_connection_i {
   verify_tls: boolean;
   ca_bundle_path?: string;
   auth_provider: proxmox_auth_provider_i;
+  privileged_ticket_provider?: SessionTicketAuthProvider;
+  shell_backend?: proxmox_lxc_shell_backend_t;
+  ssh_shell?: proxmox_ssh_shell_t;
 }
 
 export interface proxmox_request_client_input_i {
@@ -43,6 +57,7 @@ export interface proxmox_request_i {
   body?: unknown;
   timeout_ms?: number;
   retry_allowed?: boolean;
+  auth_context?: "default" | "privileged";
 }
 
 export interface proxmox_request_client_i {
@@ -106,6 +121,7 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
   }
 
   public async request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
+    const use_privileged_auth = params.auth_context === "privileged";
     return this.sendWithRetry<T>({
       method: params.method,
       path: params.path,
@@ -115,11 +131,18 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
       body: params.body,
       timeout_ms: params.timeout_ms,
       retry_allowed: params.retry_allowed,
+      auth_context: params.auth_context,
       attempt_number: 1,
+      use_privileged_auth,
+      privileged_ticket_refresh_attempted: false,
     });
   }
 
-  private async sendWithRetry<T>(params: proxmox_request_i & { attempt_number: number }): Promise<proxmox_api_response_t<T>> {
+  private async sendWithRetry<T>(params: proxmox_request_i & {
+    attempt_number: number;
+    use_privileged_auth: boolean;
+    privileged_ticket_refresh_attempted: boolean;
+  }): Promise<proxmox_api_response_t<T>> {
     const selected_node = this.resolveNode(params.node_id);
     const normalized_path = BuildApiPath(params.path);
     const request: proxmox_http_request_t = {
@@ -129,6 +152,9 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
       headers: await this.buildHeaders({
         node: selected_node,
         headers: params.headers,
+        request_method: params.method,
+        use_privileged_auth: params.use_privileged_auth,
+        force_privileged_refresh: params.privileged_ticket_refresh_attempted,
       }),
       body: params.body,
       timeout_ms: params.timeout_ms,
@@ -175,6 +201,20 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
 
       return this.parser.parseResponse<T>(raw_response);
     } catch (error) {
+      if (
+        params.use_privileged_auth
+        && !params.privileged_ticket_refresh_attempted
+        && ShouldRefreshPrivilegedSessionTicket(error)
+      ) {
+        return this.sendWithRetry<T>({
+          ...params,
+          attempt_number: 1,
+          retry_allowed: false,
+          use_privileged_auth: true,
+          privileged_ticket_refresh_attempted: true,
+        });
+      }
+
       const should_retry = params.retry_allowed === false
         ? { should_retry: false, delay_ms: 0 }
         : EvaluateRetry({
@@ -196,8 +236,10 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
   private async buildHeaders(params: {
     node: proxmox_node_connection_i;
     headers?: Record<string, string>;
+    request_method: proxmox_http_method_t;
+    use_privileged_auth: boolean;
+    force_privileged_refresh: boolean;
   }): Promise<Record<string, string>> {
-    const auth_header = await ResolveAuthHeader(params.node);
     const merged_headers: Record<string, string> = {};
     if (this.default_headers) {
       Object.assign(merged_headers, this.default_headers);
@@ -205,6 +247,27 @@ export class ProxmoxRequestClient implements proxmox_request_client_i {
     if (params.headers) {
       Object.assign(merged_headers, params.headers);
     }
+    if (params.use_privileged_auth) {
+      if (!params.node.privileged_ticket_provider) {
+        throw new ProxmoxPrivilegedFallbackError({
+          code: "proxmox.auth.privileged_fallback_misconfigured",
+          message: "Privileged fallback requested but privileged ticket provider is missing.",
+          details: {
+            field: "node.privileged_auth",
+            value: params.node.node_id,
+          },
+        });
+      }
+      delete merged_headers.Authorization;
+      delete merged_headers.authorization;
+      const privileged_headers = await params.node.privileged_ticket_provider.getSessionHeaders({
+        method: params.request_method,
+        force_refresh: params.force_privileged_refresh,
+      });
+      Object.assign(merged_headers, privileged_headers);
+      return merged_headers;
+    }
+    const auth_header = await ResolveAuthHeader(params.node);
     merged_headers.Authorization = auth_header;
     return merged_headers;
   }
@@ -457,6 +520,16 @@ function IsRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function ShouldRefreshPrivilegedSessionTicket(error: unknown): boolean {
+  if (error instanceof ProxmoxAuthError && (error.status_code === 401 || error.status_code === 403)) {
+    return true;
+  }
+  if (error instanceof ProxmoxError && error.code === "proxmox.auth.invalid_token") {
+    return true;
+  }
+  return false;
+}
+
 export function BuildRequestClientNode(params: {
   node_id: string;
   host: string;
@@ -464,6 +537,9 @@ export function BuildRequestClientNode(params: {
   port?: number;
   verify_tls?: boolean;
   ca_bundle_path?: string;
+  privileged_ticket_provider?: SessionTicketAuthProvider;
+  shell_backend?: proxmox_lxc_shell_backend_t;
+  ssh_shell?: proxmox_ssh_shell_t;
   auth: {
     provider: "env" | "file" | "vault" | "sops";
     env_var?: string;
@@ -493,5 +569,8 @@ export function BuildRequestClientNode(params: {
     verify_tls: params.verify_tls ?? true,
     ca_bundle_path: params.ca_bundle_path,
     auth_provider,
+    privileged_ticket_provider: params.privileged_ticket_provider,
+    shell_backend: params.shell_backend,
+    ssh_shell: params.ssh_shell,
   };
 }

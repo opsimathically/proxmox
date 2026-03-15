@@ -3,16 +3,22 @@ import {
   LoadConfig,
   ProxmoxAuthError,
   ProxmoxClient,
+  ProxmoxCommandExitError,
+  ProxmoxCommandTimeoutError,
   ProxmoxError,
   ProxmoxHttpError,
+  ProxmoxLxcExecError,
   ProxmoxRateLimitError,
+  ProxmoxTerminalSessionError,
   ProxmoxTimeoutError,
   ProxmoxValidationError,
   ResolveProfile
 } from './src/index';
 import type {
   proxmox_datacenter_storage_record_i,
+  proxmox_lxc_helper_create_input_i,
   proxmox_lxc_record_i,
+  proxmox_lxc_terminal_event_t,
   proxmox_node_network_interface_record_i,
   proxmox_node_record_i,
   proxmox_pool_record_i,
@@ -193,6 +199,86 @@ function ResolveOptionalPositiveInteger(params: {
   }
 
   return parsed_value;
+}
+
+function ResolveLxcSmokeContainerId(
+  raw_container_id: string | undefined
+): number {
+  const default_container_id = 100;
+  if (raw_container_id === undefined || raw_container_id.trim().length === 0) {
+    return default_container_id;
+  }
+
+  const parsed_container_id = Number.parseInt(raw_container_id.trim(), 10);
+  if (!Number.isInteger(parsed_container_id) || parsed_container_id <= 0) {
+    throw new Error(
+      'PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID must be a positive integer.'
+    );
+  }
+
+  return parsed_container_id;
+}
+
+function BuildLxcSmokeOutputExcerpt(raw_output: string): string {
+  const normalized_output = raw_output.replace(/\s+/g, ' ').trim();
+  if (normalized_output.length === 0) {
+    return 'none';
+  }
+  if (normalized_output.length <= 180) {
+    return normalized_output;
+  }
+  return `${normalized_output.slice(0, 177)}...`;
+}
+
+function SummarizeLxcSmokeTerminalEvents(params: {
+  events: proxmox_lxc_terminal_event_t[];
+}): {
+  open_count: number;
+  output_count: number;
+  close_count: number;
+  error_count: number;
+  output_excerpt: string;
+} {
+  let open_count = 0;
+  let output_count = 0;
+  let close_count = 0;
+  let error_count = 0;
+  let merged_output = '';
+
+  for (const terminal_event of params.events) {
+    if (terminal_event.event_type === 'open') {
+      open_count += 1;
+      continue;
+    }
+    if (terminal_event.event_type === 'output') {
+      output_count += 1;
+      if (typeof terminal_event.output_chunk === 'string') {
+        merged_output += terminal_event.output_chunk;
+      }
+      continue;
+    }
+    if (terminal_event.event_type === 'close') {
+      close_count += 1;
+      continue;
+    }
+    if (terminal_event.event_type === 'error') {
+      error_count += 1;
+    }
+  }
+
+  return {
+    open_count,
+    output_count,
+    close_count,
+    error_count,
+    output_excerpt: BuildLxcSmokeOutputExcerpt(merged_output)
+  };
+}
+
+async function SleepForLxcSmoke(delay_ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delay_ms);
+  });
 }
 
 function ResolvePlannerScoringMode(
@@ -530,18 +616,18 @@ function ResolvePoolResourceType(
 }
 
 function NormalizeStorageContentList(
-  content: proxmox_datacenter_storage_record_i['content']
+  content: unknown
 ): string[] {
   if (Array.isArray(content)) {
     return content
-      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
-      .filter((entry) => entry.length > 0);
+      .map((entry: unknown) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry: string) => entry.length > 0);
   }
   if (typeof content === 'string') {
     return content
       .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
+      .map((entry: string) => entry.trim())
+      .filter((entry: string) => entry.length > 0);
   }
   return [];
 }
@@ -1417,7 +1503,7 @@ async function Main(): Promise<void> {
       raw_hostname: process.env.PROXMOX_EXAMPLE_LXC_HELPER_HOSTNAME,
       container_id: lxc_helper_container_id
     });
-    const lxc_cluster_preflight_input = {
+    const lxc_cluster_preflight_input: proxmox_lxc_helper_create_input_i = {
       general: {
         node_id,
         container_id: lxc_helper_container_id,
@@ -2508,6 +2594,275 @@ async function Main(): Promise<void> {
     }
   }
 
+  const run_lxc_smoke = process.env.PROXMOX_EXAMPLE_LXC_SMOKE_RUN === undefined
+    ? true
+    : NormalizeBoolean(process.env.PROXMOX_EXAMPLE_LXC_SMOKE_RUN);
+  if (!run_lxc_smoke) {
+    console.info(
+      '[example] lxc_smoke_skipped reason=PROXMOX_EXAMPLE_LXC_SMOKE_RUN_disabled'
+    );
+  } else {
+    const lxc_smoke_node_id = ResolveOptionalNodeId({
+      raw_value: process.env.PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID,
+      field_name: 'PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID'
+    }) ?? 'g75';
+    const lxc_smoke_container_id = ResolveLxcSmokeContainerId(
+      process.env.PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID
+    );
+    const lxc_smoke_timeout_ms = ResolveOptionalPositiveInteger({
+      raw_value: process.env.PROXMOX_EXAMPLE_LXC_SMOKE_TIMEOUT_MS,
+      field_name: 'PROXMOX_EXAMPLE_LXC_SMOKE_TIMEOUT_MS'
+    }) ?? 30000;
+
+    const lxc_smoke_nodes = await proxmox_client.node_service.listNodes();
+    const target_node_exists = lxc_smoke_nodes.data.some((node_record) => {
+      const node_record_id = ResolveNodeRecordId(node_record);
+      if (node_record_id === undefined) {
+        return false;
+      }
+      return node_record_id.toLowerCase() === lxc_smoke_node_id.toLowerCase();
+    });
+    if (!target_node_exists) {
+      throw new Error(
+        `LXC smoke test target node was not found in cluster: ${lxc_smoke_node_id}`
+      );
+    }
+
+    const lxc_smoke_container = await proxmox_client.lxc_service.getContainer({
+      node_id: lxc_smoke_node_id,
+      container_id: lxc_smoke_container_id
+    });
+    const lxc_smoke_node_connection =
+      proxmox_client.request_client.resolveNode(lxc_smoke_node_id);
+    const lxc_smoke_shell_backend =
+      lxc_smoke_node_connection.shell_backend ?? 'ssh_pct';
+    console.info(
+      `[example] lxc_smoke_target node=${lxc_smoke_node_id} container_id=${lxc_smoke_container_id} expected_name=codextestlxc.domain actual_name=${ResolveResourceName(
+        lxc_smoke_container.data
+      )} status=${ResolveResourceStatus(lxc_smoke_container.data)} shell_backend=${lxc_smoke_shell_backend}`
+    );
+    const smoke_commands: Array<{ label: string; command_argv: string[] }> = [
+      { label: 'hostname', command_argv: ['hostname'] },
+      { label: 'id', command_argv: ['id'] },
+      { label: 'uptime', command_argv: ['uptime'] },
+      { label: 'marker', command_argv: ['echo', 'SDK_EXEC_OK'] }
+    ];
+    for (const smoke_command of smoke_commands) {
+      const command_result = await proxmox_client.lxc_service.runCommand({
+        node_id: lxc_smoke_node_id,
+        container_id: lxc_smoke_container_id,
+        command_argv: smoke_command.command_argv,
+        timeout_ms: lxc_smoke_timeout_ms,
+        max_output_bytes: 256 * 1024,
+        fail_on_non_zero_exit: true
+      });
+      console.info(
+        `[example] lxc_smoke_exec label=${smoke_command.label} mode=${command_result.execution_mode ?? 'ssh_pct'} session_id=${command_result.session_id} exit_code=${command_result.exit_code ?? 'unknown'} duration_ms=${command_result.duration_ms} truncated=${command_result.truncated_output} stdout_excerpt=${BuildLxcSmokeOutputExcerpt(
+          command_result.stdout
+        )}`
+      );
+    }
+
+    const terminal_session = await proxmox_client.lxc_service.openTerminalSession({
+      node_id: lxc_smoke_node_id,
+      container_id: lxc_smoke_container_id,
+      shell_mode: false,
+      columns: 120,
+      rows: 32,
+      timeout_ms: lxc_smoke_timeout_ms
+    });
+    console.info(
+      `[example] lxc_smoke_terminal_opened session_id=${terminal_session.session_id} node=${lxc_smoke_node_id} container_id=${lxc_smoke_container_id}`
+    );
+
+    const terminal_events: proxmox_lxc_terminal_event_t[] = [];
+    await proxmox_client.lxc_service.resizeTerminal({
+      session_id: terminal_session.session_id,
+      columns: 140,
+      rows: 42
+    });
+
+    await proxmox_client.lxc_service.sendTerminalInput({
+      session_id: terminal_session.session_id,
+      input_text: '\n'
+    });
+    await SleepForLxcSmoke(150);
+    terminal_events.push(
+      ...(await proxmox_client.lxc_service.readTerminalEvents({
+        session_id: terminal_session.session_id,
+        max_events: 200
+      }))
+    );
+
+    const terminal_smoke_input_commands = [
+      'echo SDK_TERMINAL_OK',
+      'hostname',
+      'id'
+    ];
+    for (const terminal_smoke_input_command of terminal_smoke_input_commands) {
+      await proxmox_client.lxc_service.sendTerminalInput({
+        session_id: terminal_session.session_id,
+        input_text: `${terminal_smoke_input_command}\n`
+      });
+      for (let settle_poll_attempt = 0; settle_poll_attempt < 6; settle_poll_attempt += 1) {
+        await SleepForLxcSmoke(140);
+        const settle_event_batch = await proxmox_client.lxc_service.readTerminalEvents({
+          session_id: terminal_session.session_id,
+          max_events: 200
+        });
+        if (settle_event_batch.length > 0) {
+          terminal_events.push(...settle_event_batch);
+        }
+      }
+    }
+
+    for (let poll_attempt = 0; poll_attempt < 20; poll_attempt += 1) {
+      await SleepForLxcSmoke(200);
+      const event_batch = await proxmox_client.lxc_service.readTerminalEvents({
+        session_id: terminal_session.session_id,
+        max_events: 200
+      });
+      if (event_batch.length > 0) {
+        terminal_events.push(...event_batch);
+      }
+
+      try {
+        const terminal_state = proxmox_client.lxc_service.getTerminalSession({
+          session_id: terminal_session.session_id
+        });
+        if (terminal_state.status === 'closed') {
+          break;
+        }
+      } catch (error) {
+        if (
+          error instanceof ProxmoxTerminalSessionError &&
+          error.code === 'proxmox.lxc.terminal_session_not_found'
+        ) {
+          break;
+        }
+        throw error;
+      }
+    }
+
+    const terminal_event_summary = SummarizeLxcSmokeTerminalEvents({
+      events: terminal_events
+    });
+    console.info(
+      `[example] lxc_smoke_terminal_summary open=${terminal_event_summary.open_count} output=${terminal_event_summary.output_count} close=${terminal_event_summary.close_count} error=${terminal_event_summary.error_count} output_excerpt=${terminal_event_summary.output_excerpt}`
+    );
+
+    await proxmox_client.lxc_service.closeTerminalSession({
+      session_id: terminal_session.session_id,
+      reason: 'lxc_smoke_complete',
+      code: 1000
+    });
+
+    let terminal_cleanup_confirmed = false;
+    try {
+      proxmox_client.lxc_service.getTerminalSession({
+        session_id: terminal_session.session_id
+      });
+    } catch (error) {
+      if (
+        error instanceof ProxmoxTerminalSessionError &&
+        error.code === 'proxmox.lxc.terminal_session_not_found'
+      ) {
+        terminal_cleanup_confirmed = true;
+      } else {
+        throw error;
+      }
+    }
+    console.info(
+      `[example] lxc_smoke_terminal_cleanup confirmed=${terminal_cleanup_confirmed} session_id=${terminal_session.session_id}`
+    );
+
+    const lxc_expect_smoke_run = NormalizeBoolean(
+      process.env.PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN ?? 'true'
+    );
+    if (!lxc_expect_smoke_run) {
+      console.info(
+        '[example] lxc_expect_smoke_skipped reason=PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN_not_enabled'
+      );
+    } else {
+      const lxc_expect_result = await proxmox_client.lxc_expect_service.runScript({
+        target: {
+          open_terminal_input: {
+            node_id: lxc_smoke_node_id,
+            container_id: lxc_smoke_container_id,
+            shell_mode: false,
+            columns: 120,
+            rows: 32,
+            timeout_ms: lxc_smoke_timeout_ms
+          },
+          close_on_finish: true
+        },
+        script: {
+          default_timeout_ms: lxc_smoke_timeout_ms,
+          default_poll_interval_ms: 100,
+          max_buffer_bytes: 128 * 1024,
+          steps: [
+            {
+              step_id: 'expect_prompt_ready',
+              send_input: '\n',
+              expect: [
+                {
+                  matcher_id: 'expect_prompt_ready',
+                  kind: 'string',
+                  value: '#'
+                }
+              ],
+              fail_on_timeout: true
+            },
+            {
+              step_id: 'expect_marker_exec',
+              send_input: 'printf "SDK_EXPECT_OK\\n"\n',
+              expect: [
+                {
+                  matcher_id: 'expect_marker_exec',
+                  kind: 'string',
+                  value: 'SDK_EXPECT_OK'
+                }
+              ],
+              fail_on_timeout: true
+            },
+            {
+              step_id: 'expect_uid_zero',
+              send_input: 'id -u\n',
+              expect: [
+                {
+                  matcher_id: 'expect_uid_zero',
+                  kind: 'regex',
+                  pattern: '(?:^|\\s)0(?:\\s|$)'
+                }
+              ],
+              fail_on_timeout: true
+            },
+            {
+              step_id: 'expect_exit',
+              send_input: 'exit\n',
+              expect: [
+                {
+                  matcher_id: 'expect_exit',
+                  kind: 'string',
+                  value: 'exit'
+                }
+              ],
+              fail_on_timeout: false
+            }
+          ]
+        }
+      });
+      console.info(
+        `[example] lxc_expect_smoke_result succeeded=${lxc_expect_result.succeeded} opened_session=${lxc_expect_result.opened_session} closed_session=${lxc_expect_result.closed_session} steps=${lxc_expect_result.step_results.length} transcript_truncated=${lxc_expect_result.transcript.truncated}`
+      );
+      for (const step_result of lxc_expect_result.step_results) {
+        console.info(
+          `[example] lxc_expect_step step_id=${step_result.step_id} status=${step_result.status} elapsed_ms=${step_result.elapsed_ms} timeout=${step_result.timeout} unexpected_output=${step_result.unexpected_output} excerpt=${step_result.output_excerpt}`
+        );
+      }
+    }
+  }
+
   // Mutating operations are disabled by default to avoid accidental provisioning.
   if (!execute_mutations) {
     console.info(
@@ -2691,6 +3046,36 @@ async function Main(): Promise<void> {
 
 if (require.main === module) {
   void Main().catch((error: unknown) => {
+    if (
+      error instanceof ProxmoxLxcExecError ||
+      error instanceof ProxmoxTerminalSessionError
+    ) {
+      console.error(
+        `[example] lxc_terminal_error code=${error.code} message=${error.message}`
+      );
+      LogErrorCauseChain(error);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (error instanceof ProxmoxCommandTimeoutError) {
+      console.error(
+        `[example] lxc_command_timeout code=${error.code} message=${error.message}`
+      );
+      LogErrorCauseChain(error);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (error instanceof ProxmoxCommandExitError) {
+      console.error(
+        `[example] lxc_command_non_zero_exit code=${error.code} message=${error.message}`
+      );
+      LogErrorCauseChain(error);
+      process.exitCode = 1;
+      return;
+    }
+
     if (error instanceof ProxmoxAuthError) {
       console.error(
         `[example] auth_error code=${error.code} message=${error.message}`

@@ -60,10 +60,12 @@
     "@swc/core": "^1.11.24",
     "@types/command-line-args": "^5.2.3",
     "@types/command-line-usage": "^5.0.4",
+    "@types/ssh2": "^1.15.5",
     "command-line-args": "^6.0.1",
     "command-line-usage": "^7.0.3",
     "sharp": "^0.34.1",
     "source-map-support": "^0.5.21",
+    "ssh2": "^1.17.0",
     "ts-to-zod": "^5.1.0",
     "zod": "^4.3.5"
   }

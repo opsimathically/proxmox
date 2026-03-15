@@ -13,6 +13,20 @@ export type proxmox_error_code_t =
   | "proxmox.auth.missing_token"
   | "proxmox.auth.unsupported_provider"
   | "proxmox.auth.invalid_token"
+  | "proxmox.auth.ticket_acquisition_failed"
+  | "proxmox.auth.privileged_fallback_misconfigured"
+  | "proxmox.auth.privileged_fallback_denied"
+  | "proxmox.auth.privileged_fallback_failed"
+  | "proxmox.ssh.connection_failed"
+  | "proxmox.ssh.auth_failed"
+  | "proxmox.ssh.host_verification_failed"
+  | "proxmox.ssh.session_open_failed"
+  | "proxmox.ssh.session_io_failed"
+  | "proxmox.expect.timeout"
+  | "proxmox.expect.pattern_invalid"
+  | "proxmox.expect.session_closed"
+  | "proxmox.expect.step_failed"
+  | "proxmox.expect.aborted"
   | "proxmox.validation.invalid_input"
   | "proxmox.validation.missing_input"
   | "proxmox.http.not_found"
@@ -20,7 +34,12 @@ export type proxmox_error_code_t =
   | "proxmox.http.task_failed"
   | "proxmox.http.rate_limited"
   | "proxmox.http.server_error"
-  | "proxmox.http.client_error";
+  | "proxmox.http.client_error"
+  | "proxmox.lxc.exec_start_failed"
+  | "proxmox.lxc.terminal_session_io_failed"
+  | "proxmox.lxc.command_timeout"
+  | "proxmox.lxc.command_non_zero_exit"
+  | "proxmox.lxc.terminal_session_not_found";
 
 export interface proxmox_error_details_i {
   field?: string;
@@ -73,6 +92,62 @@ export class ProxmoxAuthError extends ProxmoxError {
   }
 }
 
+export class ProxmoxPrivilegedFallbackError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxPrivilegedFallbackError";
+    Object.setPrototypeOf(this, ProxmoxPrivilegedFallbackError.prototype);
+  }
+}
+
+export class ProxmoxSshShellError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxSshShellError";
+    Object.setPrototypeOf(this, ProxmoxSshShellError.prototype);
+  }
+}
+
+export class ProxmoxExpectTimeoutError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectTimeoutError";
+    Object.setPrototypeOf(this, ProxmoxExpectTimeoutError.prototype);
+  }
+}
+
+export class ProxmoxExpectPatternError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectPatternError";
+    Object.setPrototypeOf(this, ProxmoxExpectPatternError.prototype);
+  }
+}
+
+export class ProxmoxExpectSessionClosedError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectSessionClosedError";
+    Object.setPrototypeOf(this, ProxmoxExpectSessionClosedError.prototype);
+  }
+}
+
+export class ProxmoxExpectStepFailedError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectStepFailedError";
+    Object.setPrototypeOf(this, ProxmoxExpectStepFailedError.prototype);
+  }
+}
+
+export class ProxmoxExpectAbortedError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxExpectAbortedError";
+    Object.setPrototypeOf(this, ProxmoxExpectAbortedError.prototype);
+  }
+}
+
 export class ProxmoxValidationError extends ProxmoxError {
   constructor(params: proxmox_error_input_i) {
     super(params);
@@ -118,6 +193,38 @@ export class ProxmoxRateLimitError extends ProxmoxError {
     super(params);
     this.name = "ProxmoxRateLimitError";
     Object.setPrototypeOf(this, ProxmoxRateLimitError.prototype);
+  }
+}
+
+export class ProxmoxLxcExecError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxLxcExecError";
+    Object.setPrototypeOf(this, ProxmoxLxcExecError.prototype);
+  }
+}
+
+export class ProxmoxTerminalSessionError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxTerminalSessionError";
+    Object.setPrototypeOf(this, ProxmoxTerminalSessionError.prototype);
+  }
+}
+
+export class ProxmoxCommandTimeoutError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxCommandTimeoutError";
+    Object.setPrototypeOf(this, ProxmoxCommandTimeoutError.prototype);
+  }
+}
+
+export class ProxmoxCommandExitError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxCommandExitError";
+    Object.setPrototypeOf(this, ProxmoxCommandExitError.prototype);
   }
 }
 

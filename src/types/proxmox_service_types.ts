@@ -334,6 +334,116 @@ export interface proxmox_lxc_restore_input_i extends proxmox_lxc_reference_input
   force?: boolean;
 }
 
+export interface proxmox_lxc_command_environment_i {
+  [environment_variable: string]: string;
+}
+
+export interface proxmox_lxc_run_command_input_i extends proxmox_lxc_reference_input_i {
+  command_argv?: string[];
+  shell_mode?: boolean;
+  shell_command?: string;
+  env?: proxmox_lxc_command_environment_i;
+  cwd?: string;
+  user?: string;
+  stdin_text?: string;
+  timeout_ms?: number;
+  max_output_bytes?: number;
+  fail_on_non_zero_exit?: boolean;
+  retry_allowed?: boolean;
+}
+
+export interface proxmox_lxc_terminal_open_input_i extends proxmox_lxc_reference_input_i {
+  command_argv?: string[];
+  shell_mode?: boolean;
+  shell_command?: string;
+  env?: proxmox_lxc_command_environment_i;
+  cwd?: string;
+  user?: string;
+  columns?: number;
+  rows?: number;
+  timeout_ms?: number;
+  retry_allowed?: boolean;
+}
+
+export interface proxmox_lxc_terminal_send_input_i {
+  session_id: string;
+  input_text: string;
+}
+
+export interface proxmox_lxc_terminal_resize_input_i {
+  session_id: string;
+  columns: number;
+  rows: number;
+}
+
+export interface proxmox_lxc_terminal_read_events_input_i {
+  session_id: string;
+  max_events?: number;
+}
+
+export interface proxmox_lxc_terminal_close_input_i {
+  session_id: string;
+  reason?: string;
+  code?: number;
+}
+
+export interface proxmox_lxc_terminal_session_query_i {
+  session_id: string;
+}
+
+export type proxmox_lxc_terminal_session_state_t = "opening" | "open" | "closed" | "error";
+export type proxmox_lxc_terminal_event_type_t = "open" | "output" | "error" | "close";
+
+export interface proxmox_lxc_terminal_handshake_record_i {
+  backend: "ssh_pct";
+  transport: "ssh";
+  task_id?: string;
+  user?: string;
+  endpoint: string;
+}
+
+export interface proxmox_lxc_terminal_session_record_i {
+  session_id: string;
+  node_id: string;
+  container_id: string;
+  command: string;
+  columns: number;
+  rows: number;
+  opened_at: string;
+  closed_at?: string;
+  status: proxmox_lxc_terminal_session_state_t;
+  handshake: proxmox_lxc_terminal_handshake_record_i;
+}
+
+export interface proxmox_lxc_terminal_event_record_i {
+  session_id: string;
+  event_type: proxmox_lxc_terminal_event_type_t;
+  timestamp_iso: string;
+  output_chunk?: string;
+  error_message?: string;
+  close_code?: number;
+  close_reason?: string;
+}
+
+export interface proxmox_lxc_run_command_result_record_i {
+  session_id: string;
+  node_id: string;
+  container_id: string;
+  command: string;
+  execution_mode?: "ssh_pct";
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  succeeded: boolean;
+  timed_out: boolean;
+  exit_code?: number;
+  stdout: string;
+  stderr: string;
+  combined_output: string;
+  truncated_output: boolean;
+  handshake: proxmox_lxc_terminal_handshake_record_i;
+}
+
 export type proxmox_lxc_helper_ipv4_mode_t = "dhcp" | "static" | "none";
 export type proxmox_lxc_helper_ipv6_mode_t = "dhcp" | "static" | "slaac" | "none";
 
@@ -1549,6 +1659,9 @@ export type proxmox_lxc_task_started_t = (proxmox_task_operation_record_i & { re
 export type proxmox_lxc_task_completed_t = (proxmox_task_operation_completed_record_i & { resource_type: "lxc" }) & proxmox_lxc_task_response_i;
 export type proxmox_vm_task_result_t = proxmox_vm_task_started_t | proxmox_vm_task_completed_t;
 export type proxmox_lxc_task_result_t = proxmox_lxc_task_started_t | proxmox_lxc_task_completed_t;
+export type proxmox_lxc_terminal_session_t = proxmox_lxc_terminal_session_record_i;
+export type proxmox_lxc_terminal_event_t = proxmox_lxc_terminal_event_record_i;
+export type proxmox_lxc_run_command_result_t = proxmox_lxc_run_command_result_record_i;
 
 export type proxmox_vm_list_response_t = proxmox_api_response_t<proxmox_vm_list_t>;
 export type proxmox_lxc_list_response_t = proxmox_api_response_t<proxmox_lxc_list_t>;

@@ -1,32 +1,68 @@
 # Proxmox SDK (TypeScript)
 
-TypeScript SDK for Proxmox VE with typed services, strict config validation, SSH-backed LXC shell control, upload workflows, deep in-container telemetry, and single-file HTML report generation.
+Typed Proxmox VE SDK for cluster, node, VM, LXC, storage, access, HA, task orchestration, DR readiness, helper workflows, SSH-backed LXC shell control, upload pipelines, in-container telemetry, and single-file HTML reporting.
 
-## What changed
+## 1) Project overview
 
-- LXC shell execution is SSH-only via `ssh_pct` (`pct exec` and `pct enter`).
-- Expect-style interactive scripting is available through `LxcExpectService`.
-- LXC file and directory uploads are first-class (`uploadFile`, `uploadDirectory`).
-- LXC telemetry now includes OS, cron, processes, TCP/UDP listeners, services, hardware, disk, memory, CPU, identity, firewall, and development tooling.
-- HTML report generation is first-class (`generateSystemReportHtml`, `generateSystemReportFile`) with section-level status metadata.
+This SDK provides:
 
-## Architecture overview
+- Strict TypeScript request/response contracts.
+- Centralized config/auth/transport/retry/task-polling behavior.
+- Service-oriented APIs for Proxmox domains.
+- SSH-based LXC execution/terminal/upload/introspection/report generation.
+- Higher-level helper workflows for placement, migration, drain, and LXC lifecycle operations.
 
-- Config/auth/transport are centralized and typed.
-- `ProxmoxClient` exposes service instances (`*_service`) and helper workflows.
-- LXC command/terminal/upload/telemetry/report features live under `lxc_service`.
-- `lxc_expect_service` composes on top of `lxc_service` terminal session APIs.
-- Example scripts are smoke/demo consumers of SDK APIs, not internal SDK logic.
+High-level architecture:
 
-## Install
+- `config` layer: schema validation, profile resolution, secret-source wiring.
+- `transport` layer: HTTP execution, retry/timeout, typed error mapping.
+- `services` layer: domain APIs (`datacenter`, `cluster`, `node`, `vm`, `lxc`, etc.).
+- `helpers` layer: multi-step orchestration utilities.
+- `lxc_expect_service`: expect-style interactive terminal automation.
+
+## 2) Installation and prerequisites
+
+Requirements:
+
+- Node.js 18+ (Node.js 20 LTS recommended).
+- TypeScript runtime/build setup for your project.
+- Proxmox API access (token/user with required ACLs).
+- SSH reachability to target nodes for LXC shell/upload/report telemetry flows.
+- TLS trust configured for Proxmox API endpoints.
+
+Install:
 
 ```bash
 npm install @opsimathically/proxmox
 ```
 
-## Configuration (minimal secure example)
+## 3) Configuration deep dive
 
-Use env/file secret sources. Do not hardcode tokens/passwords.
+The SDK uses `proxmoxlib.json` with these core blocks:
+
+- `defaults`: transport/retry/task poller defaults.
+- `profiles`: runtime profile selection and cluster mapping.
+- `clusters`: one or more clusters containing nodes.
+- `nodes`: API auth config + optional SSH shell backend config.
+
+Auth providers currently supported:
+
+- `env`
+- `file`
+- `vault`
+- `sops`
+
+LXC shell backend:
+
+- `shell_backend`: currently `ssh_pct`
+- `ssh_shell`: SSH auth/host verification/timeouts for shell/upload/telemetry/report collection
+
+Secret sourcing guidance:
+
+- Keep API token and SSH secret material in env/files/secret providers.
+- Do not hardcode credentials in source or committed config.
+
+### Minimal config example
 
 ```json
 {
@@ -64,9 +100,7 @@ Use env/file secret sources. Do not hardcode tokens/passwords.
               "env_var": "PROXMOX_NODE_SSH_PASSWORD"
             },
             "strict_host_key": true,
-            "known_hosts_path": "/home/user/.ssh/known_hosts",
-            "connect_timeout_ms": 8000,
-            "command_timeout_ms": 30000
+            "known_hosts_path": "/home/user/.ssh/known_hosts"
           },
           "verify_tls": true
         }
@@ -76,269 +110,671 @@ Use env/file secret sources. Do not hardcode tokens/passwords.
 }
 ```
 
-## Client bootstrap
+### Production-oriented config notes
+
+- Set `verify_tls: true` and use `ca_bundle_path` where needed.
+- Use `strict_host_key` + `known_hosts_path` or pinned fingerprint.
+- Keep `request_timeout_ms`, `connect_timeout_ms`, and retry policy explicit.
+- Tune `task_poller` defaults for long-running operations.
+
+### Config path/profile selection behavior
+
+`ProxmoxClient.fromPath(...)` resolves config path in this order:
+
+1. explicit `config_path` argument
+2. `PROXMOXLIB_CONFIG_PATH`
+3. `~/environment_files/proxmoxlib.json`
+
+Profile selection:
+
+- explicit `profile_name` argument
+- otherwise active profile from config
+
+## 4) Client bootstrap patterns
+
+### From config path + profile
 
 ```ts
-import { LoadConfig, ResolveProfile, ProxmoxClient } from "@opsimathically/proxmox";
-
-const config_path = process.env.PROXMOXLIB_CONFIG_PATH ?? "/home/user/environment_files/proxmoxlib.json";
-const selected_profile_name = process.env.PROXMOXLIB_PROFILE ?? "default";
-
-const config = LoadConfig({ config_path });
-const profile = ResolveProfile({ config, profile_name: selected_profile_name });
+import { ProxmoxClient } from "@opsimathically/proxmox";
 
 const client = ProxmoxClient.fromPath({
-  config_path,
-  profile_name: profile.name,
+  config_path: process.env.PROXMOXLIB_CONFIG_PATH,
+  profile_name: process.env.PROXMOXLIB_PROFILE ?? "default",
 });
 ```
 
-## Core LXC shell capabilities
-
-### One-off command execution (`runCommand`)
+### Direct config object
 
 ```ts
-const result = await client.lxc_service.runCommand({
-  node_id: "g75",
-  container_id: 100,
-  command_argv: ["uname", "-a"],
-  timeout_ms: 30000,
-  max_output_bytes: 256 * 1024,
-  fail_on_non_zero_exit: false,
-});
+import { LoadConfig, ProxmoxClient } from "@opsimathically/proxmox";
 
-console.log(result.exit_code, result.stdout_text, result.stderr_text);
+const config = LoadConfig({ config_path: "/home/user/environment_files/proxmoxlib.json" });
+const client = new ProxmoxClient({
+  config,
+  profile_name: "default",
+});
 ```
 
-### Interactive terminal lifecycle
+### Startup diagnostics (safe metadata logger)
+
+```ts
+import { ProxmoxClient } from "@opsimathically/proxmox";
+
+const client = ProxmoxClient.fromPath({
+  profile_name: "default",
+  emit_startup_diagnostics: true,
+  diagnostics_logger: {
+    info: (message, payload) => {
+      console.info(message, payload);
+    },
+    warn: (message, payload) => {
+      console.warn(message, payload);
+    },
+    error: (message, payload) => {
+      console.error(message, payload);
+    },
+  },
+});
+```
+
+## 5) Services reference (full library)
+
+### DatacenterService (`client.datacenter_service`)
+
+Purpose: cluster-level read APIs.
+
+Methods:
+
+- `getSummary`
+- `getVersion`
+- `listStorage`
+
+Example:
+
+```ts
+const version = await client.datacenter_service.getVersion();
+const summary = await client.datacenter_service.getSummary();
+```
+
+### ClusterService (`client.cluster_service`)
+
+Purpose: cluster membership, node listing, compatibility checks, ID allocation.
+
+Methods:
+
+- `getStatus`
+- `getMembership`
+- `listNodes`
+- `allocateNextId`
+- `checkStorageCompatibility`
+- `checkBridgeCompatibility`
+
+Example:
+
+```ts
+const next_id = await client.cluster_service.allocateNextId();
+const bridge_check = await client.cluster_service.checkBridgeCompatibility({
+  node_ids: ["g75"],
+  bridge: "vmbr0",
+});
+```
+
+### NodeService (`client.node_service`)
+
+Purpose: node status/network/capacity/services/metrics/reboot.
+
+Methods:
+
+- `listNodes`
+- `getNodeStatus`
+- `listNetworkInterfaces`
+- `listBridges`
+- `getNetworkInterface`
+- `getNodeCpuCapacity`
+- `canAllocateCores`
+- `getNodeMemoryCapacity`
+- `getNodeMemoryAllocations`
+- `canAllocateMemory`
+- `getServices`
+- `getNodeMetrics`
+- `rebootNode`
+
+Example:
+
+```ts
+const status = await client.node_service.getNodeStatus({ node_id: "g75" });
+const core_preflight = await client.node_service.canAllocateCores({
+  node_id: "g75",
+  requested_cores: 2,
+  mode: "logical",
+});
+```
+
+### VmService (`client.vm_service`)
+
+Purpose: VM lifecycle, migration, and task tracking.
+
+Methods:
+
+- `listVms`
+- `getVm`
+- `createVm`
+- `updateVm`
+- `cloneVm`
+- `deleteVm`
+- `startVm`
+- `stopVm`
+- `restartVm`
+- `migrateVm`
+- `waitForTask`
+
+Example (non-destructive):
+
+```ts
+const vm_list = await client.vm_service.listVms({ node_id: "g75" });
+const vm = await client.vm_service.getVm({ node_id: "g75", vm_id: 100 });
+```
+
+### LxcService (`client.lxc_service`)
+
+Purpose: LXC lifecycle plus SSH shell/terminal/expect support/upload/introspection/reporting.
+
+Methods:
+
+- `listContainers`
+- `getContainer`
+- `createContainer`
+- `updateContainer`
+- `deleteContainer`
+- `startContainer`
+- `stopContainer`
+- `migrateContainer`
+- `snapshotContainer`
+- `restoreContainer`
+- `runCommand`
+- `getSystemInfo`
+- `getCronJobs`
+- `getProcessList`
+- `getOpenTcpPorts`
+- `getOpenUdpPorts`
+- `getServicesAndDaemons`
+- `getHardwareInventory`
+- `getDiskAndBlockDevices`
+- `getMemoryInfo`
+- `getCpuInfo`
+- `getUsersAndGroups`
+- `getFirewallInfo`
+- `getDevelopmentToolingInfo`
+- `generateSystemReportHtml`
+- `generateSystemReportFile`
+- `uploadFile`
+- `uploadDirectory`
+- `openTerminalSession`
+- `sendTerminalInput`
+- `resizeTerminal`
+- `readTerminalEvents`
+- `closeTerminalSession`
+- `getTerminalSession`
+- `getCommandResult`
+- `waitForTask`
+
+Example:
+
+```ts
+const exec_result = await client.lxc_service.runCommand({
+  node_id: "g75",
+  container_id: 100,
+  command_argv: ["hostname"],
+  timeout_ms: 30000,
+});
+```
+
+### LxcExpectService (`client.lxc_expect_service`)
+
+Purpose: expect-style deterministic automation over LXC interactive sessions.
+
+Methods:
+
+- `waitFor`
+- `sendAndExpect`
+- `step`
+- `runScript`
+
+Matcher kinds:
+
+- `string`
+- `regex`
+- `callback` (runtime code matcher; not JSON-serializable)
+
+Example:
 
 ```ts
 const session = await client.lxc_service.openTerminalSession({
   node_id: "g75",
   container_id: 100,
   shell_mode: false,
-  columns: 120,
-  rows: 32,
 });
 
-await client.lxc_service.sendTerminalInput({
+await client.lxc_expect_service.sendAndExpect({
   session_id: session.session_id,
-  input_text: "id -u\n",
-});
-
-const events = await client.lxc_service.readTerminalEvents({
-  session_id: session.session_id,
-  max_events: 64,
-});
-
-await client.lxc_service.resizeTerminal({
-  session_id: session.session_id,
-  columns: 140,
-  rows: 40,
-});
-
-await client.lxc_service.closeTerminalSession({
-  session_id: session.session_id,
-  reason: "done",
+  send_input: "printf \"SDK_OK\\n\"\n",
+  expect: [{ kind: "string", value: "SDK_OK" }],
+  timeout_ms: 10000,
 });
 ```
 
-### Expect-style workflows (`LxcExpectService`)
+### AccessService (`client.access_service`)
 
-Valid matcher kinds:
+Purpose: permission and privilege checks for current/target identity.
+
+Methods:
+
+- `getCurrentPermissions`
+- `getIdentityPermissions`
+- `hasCurrentPrivilege`
+- `hasIdentityPrivilege`
+
+Example:
+
+```ts
+const can_allocate = await client.access_service.hasCurrentPrivilege({
+  path: "/storage/local",
+  privilege: "Datastore.AllocateSpace",
+});
+```
+
+### StorageService (`client.storage_service`)
+
+Purpose: storage content listing + upload/download/delete + privilege helpers.
+
+Methods:
+
+- `listStorageContent`
+- `listBackups`
+- `listIsoImages`
+- `listCtTemplates`
+- `listTemplateCatalog`
+- `deleteContent`
+- `uploadContent`
+- `downloadContent`
+- `canAuditStorage`
+- `canAllocateTemplate`
+- `canAllocateSpace`
+- `canModifyPermissions`
+
+Example (non-destructive):
+
+```ts
+const backups = await client.storage_service.listBackups({
+  node_id: "g75",
+  storage: "local",
+});
+```
+
+### PoolService (`client.pool_service`)
+
+Purpose: pool inventory and pool resource listing.
+
+Methods:
+
+- `listPools`
+- `getPool`
+- `listPoolResources`
+
+Example:
+
+```ts
+const pools = await client.pool_service.listPools();
+```
+
+### HaService (`client.ha_service`)
+
+Purpose: HA resource/group read and mutation operations.
+
+Methods:
+
+- `listResources`
+- `addResource`
+- `updateResource`
+- `removeResource`
+- `listGroups`
+
+Example (read-only):
+
+```ts
+const ha_resources = await client.ha_service.listResources({});
+const ha_groups = await client.ha_service.listGroups({});
+```
+
+### TaskService (`client.task_service`)
+
+Purpose: wait/poll multiple tasks with fail-fast or collect-all behavior.
+
+Methods:
+
+- `waitForTasks`
+
+Example:
+
+```ts
+const task_results = await client.task_service.waitForTasks({
+  tasks: [
+    { node_id: "g75", task_id: "UPID:g75:..." },
+  ],
+  fail_fast: false,
+  timeout_ms: 60000,
+});
+```
+
+### DrService (`client.dr_service`)
+
+Purpose: replication/backup capability discovery and DR readiness checks.
+
+Methods:
+
+- `discoverReplicationCapabilities`
+- `discoverBackupCapabilities`
+- `checkDrReadiness`
+
+Example:
+
+```ts
+const dr_readiness = await client.dr_service.checkDrReadiness({
+  node_id: "g75",
+  require_replication_jobs: false,
+  require_backup_storage: true,
+  minimum_backup_storage_count: 1,
+});
+```
+
+## 6) Helpers reference (full library)
+
+The client exposes `client.helpers` (`ProxmoxHelpers`) as a facade over helper classes.
+
+### ClusterOrchestrationHelper
+
+Typical use: placement and migration preflight orchestration.
+
+Facade methods:
+
+- `planLxcPlacement`
+- `planVmPlacement`
+- `migrateLxcWithPreflight`
+- `migrateVmWithPreflight`
+
+Example:
+
+```ts
+const placement = await client.helpers.planLxcPlacement({
+  required_storage_id: "local-lvm",
+  required_bridge: "vmbr0",
+  candidate_node_ids: ["g75"],
+  scoring_mode: "balanced",
+  strict_permissions: false,
+});
+```
+
+### NodeMaintenanceHelper
+
+Typical use: maintenance plan and controlled drain.
+
+Facade methods:
+
+- `prepareNodeMaintenance`
+- `drainNode`
+
+Example:
+
+```ts
+const maintenance_plan = await client.helpers.prepareNodeMaintenance({
+  node_id: "g75",
+  include_stopped: false,
+  scoring_mode: "balanced",
+});
+```
+
+### LxcHelper
+
+Typical use: higher-level LXC create flow with typed preflight and optional dry-run.
+
+Facade method:
+
+- `createLxcContainer`
+
+Example:
+
+```ts
+const preview = await client.helpers.createLxcContainer({
+  general: {
+    node_id: "g75",
+    container_id: 1900,
+    hostname: "sdk-preview.local",
+    unprivileged_container: true,
+  },
+  template: {
+    storage: "local",
+    template: "ubuntu-24.04-standard_24.04-1_amd64.tar.zst",
+  },
+  disks: {
+    storage: "local-lvm",
+    disk_size_gib: 8,
+  },
+  network: {
+    bridge: "vmbr0",
+  },
+  dry_run: true,
+  wait_for_task: true,
+});
+```
+
+### LxcBulkHelper
+
+Typical use: bulk create/destroy with controlled concurrency and per-item outcomes.
+
+Facade methods:
+
+- `createLxcContainersBulk`
+- `teardownAndDestroyLxcContainersBulk`
+
+Example:
+
+```ts
+const bulk_preview = await client.helpers.createLxcContainersBulk({
+  base_input: {
+    general: {
+      node_id: "g75",
+      container_id: 2000,
+      hostname: "bulk-2000.local",
+    },
+    template: {
+      storage: "local",
+      template: "ubuntu-24.04-standard_24.04-1_amd64.tar.zst",
+    },
+    disks: {
+      storage: "local-lvm",
+      disk_size_gib: 4,
+    },
+    network: {
+      bridge: "vmbr0",
+    },
+  },
+  count: 2,
+  dry_run: true,
+  continue_on_error: true,
+});
+```
+
+### LxcClusterPreflightHelper
+
+Typical use: node candidate preflight/ranking before create.
+
+Facade method:
+
+- `preflightLxcCreateCluster`
+
+Example:
+
+```ts
+const preflight = await client.helpers.preflightLxcCreateCluster({
+  create_input: {
+    general: {
+      node_id: "g75",
+      container_id: 2100,
+      hostname: "preflight.local",
+    },
+    template: {
+      storage: "local",
+      template: "ubuntu-24.04-standard_24.04-1_amd64.tar.zst",
+    },
+    disks: {
+      storage: "local-lvm",
+      disk_size_gib: 8,
+    },
+    network: {
+      bridge: "vmbr0",
+    },
+    dry_run: true,
+  },
+  candidate_node_ids: ["g75"],
+  strict_permissions: false,
+});
+```
+
+### LxcDestroyHelper
+
+Typical use: stop/delete with guardrails and no-op handling.
+
+Facade method:
+
+- `teardownAndDestroyLxcContainer`
+
+Example:
+
+```ts
+const destroy_preview = await client.helpers.teardownAndDestroyLxcContainer({
+  node_id: "g75",
+  container_id: 2100,
+  dry_run: true,
+  ignore_not_found: true,
+  wait_for_tasks: true,
+});
+```
+
+### ProxmoxHelpers
+
+Facade covering all helper workflows:
+
+- `createLxcContainer`
+- `teardownAndDestroyLxcContainer`
+- `createLxcContainersBulk`
+- `teardownAndDestroyLxcContainersBulk`
+- `preflightLxcCreateCluster`
+- `planLxcPlacement`
+- `planVmPlacement`
+- `migrateLxcWithPreflight`
+- `migrateVmWithPreflight`
+- `prepareNodeMaintenance`
+- `drainNode`
+
+## 7) LXC subsystem documentation (full)
+
+### SSH-only execution model
+
+- LXC shell backend is `ssh_pct`.
+- One-off commands use `pct exec`.
+- Interactive sessions use `pct enter`.
+- Terminal proxy/VNC/websocket paths are not part of active runtime flow.
+
+### `runCommand`
+
+Supports:
+
+- argv mode (`command_argv`) and shell mode (`shell_mode` + `shell_command`).
+- env/cwd/user controls.
+- deterministic `stdout_text`, `stderr_text`, `exit_code`.
+- timeout and max output limits.
+
+### Terminal lifecycle APIs
+
+- `openTerminalSession`
+- `sendTerminalInput`
+- `readTerminalEvents`
+- `resizeTerminal`
+- `closeTerminalSession`
+- `getTerminalSession`
+- `getCommandResult`
+
+### Expect workflows
+
+- `waitFor`
+- `sendAndExpect`
+- `step`
+- `runScript`
+
+Matcher kinds:
+
 - `string`
 - `regex`
-- `callback` (runtime function, not JSON-serializable)
+- `callback` (async callback with timeout support; runtime-code matcher only)
 
-```ts
-const expect_result = await client.lxc_expect_service.runScript({
-  target: {
-    open_terminal_input: {
-      node_id: "g75",
-      container_id: 100,
-      shell_mode: false,
-      columns: 120,
-      rows: 32,
-    },
-    close_on_finish: true,
-  },
-  script: {
-    default_timeout_ms: 15000,
-    steps: [
-      {
-        step_id: "prompt",
-        send_input: "\n",
-        expect: [{ kind: "string", value: "#" }],
-        fail_on_timeout: true,
-      },
-      {
-        step_id: "callback_match",
-        send_input: "printf \"SDK_EXPECT_OK\\n\"\n",
-        expect: [
-          {
-            kind: "callback",
-            callback_matcher: async ({ buffer_text }) => buffer_text.includes("SDK_EXPECT_OK"),
-            timeout_ms: 500,
-          },
-        ],
-        fail_on_timeout: true,
-      },
-    ],
-  },
-});
-```
+### Uploads
 
-## Upload capabilities
+- `uploadFile`
+- `uploadDirectory`
 
-### `uploadFile`
+Directory upload controls:
 
-```ts
-const file_upload = await client.lxc_service.uploadFile({
-  node_id: "g75",
-  container_id: 100,
-  source_file_path: "/tmp/local.txt",
-  target_file_path: "/tmp/remote.txt",
-  create_parent_directories: true,
-  overwrite: true,
-  verify_checksum: true,
-  timeout_ms: 30000,
-});
+- `pattern_mode`: `regex | glob`
+- include/exclude precedence: include pass first, exclude pass second, exclude wins
+- `symlink_policy`: `skip | preserve | dereference`
+- transfer/memory tuning: `chunk_size_bytes`, `high_water_mark_bytes`
 
-console.log(file_upload.bytes_uploaded, file_upload.throughput_bytes_per_sec);
-```
-
-### `uploadDirectory`
-
-Include/exclude precedence:
-- include pass runs first (when include patterns are provided)
-- exclude pass runs second
-- exclude wins
-
-`pattern_mode`:
-- `regex`
-- `glob`
-
-`symlink_policy`:
-- `skip`
-- `preserve`
-- `dereference`
-
-```ts
-const dir_upload = await client.lxc_service.uploadDirectory({
-  node_id: "g75",
-  container_id: 100,
-  source_directory_path: "/tmp/app_bundle",
-  target_directory_path: "/tmp/app_bundle",
-  pattern_mode: "glob",
-  include_patterns: ["**/*.js", "**/*.json"],
-  exclude_patterns: ["**/node_modules/**", "**/*.log"],
-  symlink_policy: "skip",
-  include_hidden: false,
-  overwrite: true,
-  verify_checksum: false,
-  timeout_ms: 180000,
-});
-
-console.log(dir_upload.files_uploaded, dir_upload.metrics?.wire_throughput_bytes_per_sec);
-```
-
-## LXC telemetry capabilities
-
-Available methods on `lxc_service`:
+### Telemetry suite
 
 - `getSystemInfo`
 - `getCronJobs`
 - `getProcessList`
-- `getOpenTcpPorts` (includes interface correlation fields)
-- `getOpenUdpPorts` (includes interface correlation fields)
-- `getServicesAndDaemons` (`detail_level`, `process_enrichment_mode`)
+- `getOpenTcpPorts`
+- `getOpenUdpPorts`
+- `getServicesAndDaemons`
 - `getHardwareInventory`
-- `getDiskAndBlockDevices` (`filesystem_scope`: `all|device_backed_only|persistent_only`)
-- `getMemoryInfo` (supports optional bounded procfs RSS-component enrichment)
+- `getDiskAndBlockDevices`
+- `getMemoryInfo`
 - `getCpuInfo`
-- `getUsersAndGroups` (`privilege_detail_mode`, `status_source_confidence`)
-- `getFirewallInfo` (best-effort posture inference)
-- `getDevelopmentToolingInfo` (optional distro package enrichment + limits)
+- `getUsersAndGroups`
+- `getFirewallInfo`
+- `getDevelopmentToolingInfo`
 
-Example (safe, metadata-focused):
+Notable tuning flags:
 
-```ts
-const node_id = "g75";
-const container_id = 100;
+- process env mode: `none | keys_only | sanitized_values`
+- service detail mode: `summary_only | standard | full`
+- service process enrichment mode: `none | main_pid_only | full`
+- identity privilege detail mode: `signals_only | sudoers_expanded`
+- filesystem scope: `all | device_backed_only | persistent_only`
+- optional distro package enrichment for devtools (off by default)
 
-const system_info = await client.lxc_service.getSystemInfo({ node_id, container_id });
-const tcp = await client.lxc_service.getOpenTcpPorts({
-  node_id,
-  container_id,
-  include_interfaces: true,
-  include_loopback: true,
-});
-const services = await client.lxc_service.getServicesAndDaemons({
-  node_id,
-  container_id,
-  detail_level: "standard",
-  process_enrichment_mode: "main_pid_only",
-});
-const memory = await client.lxc_service.getMemoryInfo({
-  node_id,
-  container_id,
-  include_process_breakdown: true,
-  include_process_rss_components: true,
-  process_limit: 200,
-});
+### Report generation
 
-console.log(system_info.distribution_pretty_name, tcp.summary.total_listeners, services.summary.total_services, memory.summary.process_count);
-```
+- `generateSystemReportHtml`
+- `generateSystemReportFile`
 
-## Report generation (first-class SDK capability)
+Section controls:
 
-Single-file HTML output:
-- inline CSS + JS only
-- no CDN/external assets
-- dark theme
-- per-section status/health metadata
+- `sections.include_*` toggles for all report sections
+- per-section status in metadata: `success | partial | failed | disabled`
+- per-section warning/error/truncated counts
 
-### `generateSystemReportHtml`
+Single-file output guarantees:
+
+- inline CSS
+- inline JavaScript
+- no external assets/CDN
+
+Report file example:
 
 ```ts
-const html_report = await client.lxc_service.generateSystemReportHtml({
-  node_id: "g75",
-  container_id: 100,
-  sections: {
-    include_system_info: true,
-    include_cron_jobs: true,
-    include_processes: true,
-    include_tcp_ports: true,
-    include_udp_ports: true,
-    include_services: true,
-    include_hardware: true,
-    include_disk: true,
-    include_memory: true,
-    include_cpu: true,
-    include_identity: true,
-    include_firewall: true,
-    include_devtools: true,
-  },
-  collection_options: {
-    section_timeout_ms: 30000,
-    process_limit: 200,
-    listener_limit: 512,
-  },
-  render_options: {
-    theme: "dark",
-    report_title: "LXC Telemetry Report",
-    include_raw_json: false,
-    max_table_rows: 1000,
-  },
-});
-
-console.log(html_report.metadata.section_status_counts);
-```
-
-### `generateSystemReportFile`
-
-```ts
-const file_report = await client.lxc_service.generateSystemReportFile({
+const report = await client.lxc_service.generateSystemReportFile({
   node_id: "g75",
   container_id: 100,
   output_dir: "/tmp",
@@ -346,82 +782,214 @@ const file_report = await client.lxc_service.generateSystemReportFile({
   overwrite: true,
 });
 
-console.log(file_report.report_path, file_report.bytes_written, file_report.metadata.total_duration_ms);
+console.log(report.report_path, report.bytes_written, report.metadata.section_status_counts);
 ```
 
-Section statuses:
-- `success`
-- `partial`
-- `failed`
-- `disabled`
+## 8) Error model and handling
 
-Each section metadata entry includes:
-- `warning_count`
-- `error_count`
-- `truncated`
-- `duration_ms`
+Core exported error classes include:
 
-## Example scripts
+- `ProxmoxError`
+- `ProxmoxValidationError`
+- `ProxmoxAuthError`
+- `ProxmoxHttpError`
+- `ProxmoxTransportError`
+- `ProxmoxTimeoutError`
+- `ProxmoxRateLimitError`
+- `ProxmoxNotFoundError`
+- `ProxmoxConflictError`
+- `ProxmoxTaskError`
+- `ProxmoxLxcExecError`
+- `ProxmoxLxcUploadError`
+- `ProxmoxSshShellError`
+- `ProxmoxTerminalSessionError`
+- expect-specific typed errors
+
+Typed handling pattern:
+
+```ts
+import {
+  ProxmoxError,
+  ProxmoxValidationError,
+  ProxmoxAuthError,
+  ProxmoxLxcUploadError,
+} from "@opsimathically/proxmox";
+
+try {
+  await client.lxc_service.uploadFile({
+    node_id: "g75",
+    container_id: 100,
+    source_file_path: "/tmp/input.bin",
+    target_file_path: "/tmp/input.bin",
+  });
+} catch (error) {
+  if (error instanceof ProxmoxValidationError) {
+    console.error("validation", error.code, error.message);
+  } else if (error instanceof ProxmoxAuthError) {
+    console.error("auth", error.code, error.status_code);
+  } else if (error instanceof ProxmoxLxcUploadError) {
+    console.error("upload", error.code, error.message);
+  } else if (error instanceof ProxmoxError) {
+    console.error("proxmox", error.code, error.message);
+  } else if (error instanceof Error) {
+    console.error("unexpected", error.message);
+  }
+}
+```
+
+Retry guidance:
+
+- Safe to retry selected read-only operations.
+- Do not blindly retry non-idempotent/mutating operations.
+- Use operation-specific timeout and retry policy settings.
+
+## 9) Security guidance
+
+- Keep all credentials out of source control.
+- Prefer env/file/vault/sops secret providers.
+- Keep diagnostics/logging metadata-only.
+- Use least-privilege API token and SSH credentials.
+- Keep TLS verification enabled and CA trust explicit.
+- Enable strict SSH host key verification for production.
+- Avoid broad environment capture unless required.
+
+## 10) Performance and scalability guidance
+
+Use per-call limits/timeouts aggressively:
+
+- `timeout_ms`
+- `max_output_bytes`
+- `process_limit`
+- `listener_limit`
+- `service_limit`
+- `device_limit`
+- `filesystem_limit`
+- `rule_limit` / `finding_limit`
+- module/package inventory limits
+
+Operational behavior:
+
+- Many introspection methods expose `scan_errors`, `parse_warnings`, and `truncated`.
+- Treat `truncated=true` as partial data.
+- Use lower-cost detail modes for large containers.
+
+Recommended defaults for large targets:
+
+- service: `detail_level: "summary_only"` or `"standard"`
+- service: `process_enrichment_mode: "none"` or `"main_pid_only"`
+- process/tcp/udp: `environment_mode: "none"` or `"keys_only"`
+- devtools distro package enrichment: keep disabled unless needed
+
+## 11) Example scripts guide
 
 - `example.ts`
-  - broad SDK coverage across services/helpers
-  - includes LXC run/terminal/expect/upload smoke blocks
+  - broad SDK/service/helper coverage
+  - includes optional mutation blocks gated by env flags
 - `example_uploading.ts`
-  - focused file upload, benchmark upload, and directory upload smoke
+  - focused upload smoke + benchmark + directory upload flow
 - `example_linux_container_os_info.ts`
-  - focused telemetry + report generation smoke
+  - focused telemetry smoke + HTML report generation
 
-Key report smoke toggles (`example_linux_container_os_info.ts`):
-- `PROXMOX_EXAMPLE_REPORT_RUN` (default `true`)
-- `PROXMOX_EXAMPLE_REPORT_OUTPUT_DIR` (default `/tmp`)
-- `PROXMOX_EXAMPLE_REPORT_FILENAME_PREFIX` (default `proxmox-lxc-report`)
+Common live config behavior:
 
-## Security notes
+- uses `PROXMOXLIB_CONFIG_PATH` when set
+- uses profile selection from env/default
+- expects SSH password via `PROXMOX_NODE_SSH_PASSWORD` when password auth is configured
 
-- Never store real secrets in source files.
-- Use env/file secret providers for API tokens and SSH credentials.
-- Keep logs metadata-only in automation pipelines.
-- Environment/process inspection can expose sensitive data in target systems. Prefer `environment_mode: "none"` or `"keys_only"` unless you explicitly need sanitized values.
-- Keep SSH host verification strict in production (`strict_host_key`, known_hosts/fingerprint).
-- Prefer least-privilege API tokens and SSH credentials.
+Key report toggles:
 
-## Performance and limits guidance
+- `PROXMOX_EXAMPLE_REPORT_RUN`
+- `PROXMOX_EXAMPLE_REPORT_OUTPUT_DIR`
+- `PROXMOX_EXAMPLE_REPORT_FILENAME_PREFIX`
 
-- Set explicit `timeout_ms` for all long-running operations.
-- Use limit fields (`process_limit`, `listener_limit`, `service_limit`, `device_limit`, `rule_limit`, `finding_limit`) to bound runtime and memory.
-- Respect `truncated` flags and section warning/error counts in automation.
-- Keep deeper enrichment modes opt-in:
-  - service process enrichment: `main_pid_only` for lower overhead
-  - devtools distro package enrichment: disabled by default
-  - report `include_raw_json`: keep disabled unless needed
+## 12) API quick-reference tables
 
-## Known limitations and caveats
+### Services
 
-- Container telemetry visibility is namespace/cgroup constrained and may not represent full host state.
-- Tool availability varies by distro/container image (`ss`, `systemctl`, `lspci`, `lsusb`, package managers, etc.).
-- Firewall posture and some security findings are best-effort interpretations, not formal policy proofs.
-- Process/env/procfs reads can be partially unavailable due to permissions or runtime races.
+| Service | Primary methods (non-exhaustive) | Typical use |
+|---|---|---|
+| `datacenter_service` | `getSummary`, `getVersion`, `listStorage` | cluster-level overview |
+| `cluster_service` | `listNodes`, `allocateNextId`, `checkStorageCompatibility`, `checkBridgeCompatibility` | placement preflight inputs |
+| `node_service` | `getNodeStatus`, `listBridges`, `canAllocateCores`, `canAllocateMemory`, `getNodeMetrics`, `rebootNode` | node capacity and operations |
+| `vm_service` | `listVms`, `getVm`, lifecycle methods, `migrateVm`, `waitForTask` | VM lifecycle |
+| `lxc_service` | lifecycle + shell + uploads + telemetry + report APIs | LXC automation |
+| `lxc_expect_service` | `waitFor`, `sendAndExpect`, `runScript` | interactive automation |
+| `access_service` | permission and privilege checks | ACL-aware workflows |
+| `storage_service` | list/upload/download/delete content + permission checks | storage workflows |
+| `pool_service` | `listPools`, `getPool`, `listPoolResources` | pool inventory |
+| `ha_service` | list/add/update/remove resources, list groups | HA controls |
+| `task_service` | `waitForTasks` | multi-task convergence |
+| `dr_service` | replication/backup discovery + readiness | DR posture checks |
 
-## Exports overview
+### Helper facade (`client.helpers`)
 
-Primary exports include:
+| Helper method | Typical use |
+|---|---|
+| `createLxcContainer` | create orchestration with preflight |
+| `teardownAndDestroyLxcContainer` | stop/delete orchestration |
+| `createLxcContainersBulk` | batch create |
+| `teardownAndDestroyLxcContainersBulk` | batch destroy |
+| `preflightLxcCreateCluster` | candidate validation/ranking |
+| `planLxcPlacement` | LXC placement recommendation |
+| `planVmPlacement` | VM placement recommendation |
+| `migrateLxcWithPreflight` | safe LXC migration orchestration |
+| `migrateVmWithPreflight` | safe VM migration orchestration |
+| `prepareNodeMaintenance` | drain planning |
+| `drainNode` | controlled drain execution |
+
+### LXC report section IDs
+
+| Section ID |
+|---|
+| `system_info` |
+| `cron_jobs` |
+| `processes` |
+| `tcp_ports` |
+| `udp_ports` |
+| `services` |
+| `hardware` |
+| `disk` |
+| `memory` |
+| `cpu` |
+| `identity` |
+| `firewall` |
+| `devtools` |
+
+## 13) Known limitations and caveats
+
+- LXC telemetry reflects container-visible namespaces/cgroups, not always full host visibility.
+- Tooling commands vary by distro/image and may be partially unavailable.
+- Firewall posture/security findings are best-effort interpretation, not formal policy proof.
+- Procfs-based collection can return partial results due to permissions/races.
+- High-detail enrichment can be expensive on large systems if limits are not tuned.
+
+## 14) Canonical exports
+
+Use [`src/index.ts`](src/index.ts) as the source of truth for exported classes/types/functions.
+
+Primary exported classes:
+
 - `ProxmoxClient`
-- `LxcService`
-- `LxcExpectService`
 - `DatacenterService`
 - `ClusterService`
 - `NodeService`
 - `VmService`
+- `LxcService`
+- `LxcExpectService`
 - `AccessService`
 - `StorageService`
 - `PoolService`
 - `HaService`
 - `TaskService`
 - `DrService`
-- helper classes and shared config/service/expect types
-
-See [`src/index.ts`](src/index.ts) for the canonical export surface.
+- `ClusterOrchestrationHelper`
+- `NodeMaintenanceHelper`
+- `LxcHelper`
+- `LxcBulkHelper`
+- `LxcClusterPreflightHelper`
+- `LxcDestroyHelper`
+- `ProxmoxHelpers`
 
 ## Disclaimer
 
-This project is maintained for personal, evolving use. Stability is not guaranteed, interfaces may change, and behavior may be adjusted at any time to fit current needs. If you use this code, you do so at your own risk.
+This project is for personal, evolving use. Stability is not guaranteed, behavior and interfaces may change at any time, and usage is at your own risk.

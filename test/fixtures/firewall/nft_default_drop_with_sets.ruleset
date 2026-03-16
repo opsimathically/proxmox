@@ -1,0 +1,28 @@
+table inet filter {
+  set allowed_tcp_ports {
+    type inet_service
+    elements = { 22, 443 }
+  }
+
+  map allowed_udp_ports {
+    type inet_service : verdict
+    elements = { 53 : accept, 123 : accept }
+  }
+
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iifname "lo" accept
+    tcp dport @allowed_tcp_ports accept
+    udp dport vmap @allowed_udp_ports
+    ip saddr 10.0.0.0/8 tcp dport 8080 accept
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}

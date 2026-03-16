@@ -16,6 +16,7 @@ export {
   ProxmoxConflictError,
   ProxmoxHttpError,
   ProxmoxLxcExecError,
+  ProxmoxLxcUploadError,
   ProxmoxNotFoundError,
   ProxmoxPrivilegedFallbackError,
   ProxmoxRateLimitError,

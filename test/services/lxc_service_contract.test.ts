@@ -8,8 +8,11 @@ import {
 import { proxmox_api_response_t } from "../../src/types/proxmox_http_types";
 import { proxmox_lxc_shell_backend_i } from "../../src/core/lxc_shell/lxc_shell_backend";
 import { LxcService } from "../../src/services/lxc_service";
+import { ProxmoxLxcUploadError } from "../../src/errors/proxmox_error";
 import {
   proxmox_lxc_run_command_result_t,
+  proxmox_lxc_upload_directory_result_t,
+  proxmox_lxc_upload_file_result_t,
   proxmox_lxc_terminal_event_t,
   proxmox_lxc_terminal_session_t,
 } from "../../src/types/proxmox_service_types";
@@ -51,6 +54,16 @@ class FakeRequestClient implements proxmox_request_client_i {
 
   public async request<T>(params: proxmox_request_i): Promise<proxmox_api_response_t<T>> {
     this.requests.push(params);
+    if (params.path.includes("/status/current")) {
+      return {
+        data: {
+          vmid: "105",
+          status: "running",
+        } as T,
+        success: true,
+        status_code: 200,
+      };
+    }
     return {
       data: "UPID:node-a:200:dcba" as T,
       success: true,
@@ -66,9 +79,13 @@ interface fake_terminal_runtime_i {
 
 class FakeSshShellBackend implements proxmox_lxc_shell_backend_i {
   private readonly terminal_sessions: Map<string, fake_terminal_runtime_i>;
+  public upload_should_fail_conflict: boolean;
+  public upload_should_fail_checksum: boolean;
 
   constructor() {
     this.terminal_sessions = new Map<string, fake_terminal_runtime_i>();
+    this.upload_should_fail_conflict = false;
+    this.upload_should_fail_checksum = false;
   }
 
   public async runCommand(params: {
@@ -152,6 +169,153 @@ class FakeSshShellBackend implements proxmox_lxc_shell_backend_i {
       events,
     });
     return { ...session };
+  }
+
+  public async uploadFile(params: {
+    node_connection: proxmox_node_connection_i;
+    upload_input: {
+      node_id: string;
+      container_id: string;
+      source_file_path: string;
+      target_file_path: string;
+      owner_user?: string;
+      owner_group?: string;
+      mode_octal?: string;
+      create_parent_directories: boolean;
+      overwrite: boolean;
+      verify_checksum: boolean;
+      timeout_ms: number;
+      chunk_size_bytes: number;
+      high_water_mark_bytes: number;
+    };
+  }): Promise<proxmox_lxc_upload_file_result_t> {
+    if (this.upload_should_fail_conflict) {
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_conflict",
+        message: "Target exists.",
+        details: {
+          field: "target_file_path",
+          value: params.upload_input.target_file_path,
+        },
+      });
+    }
+    if (this.upload_should_fail_checksum) {
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_checksum_mismatch",
+        message: "Checksum mismatch.",
+        details: {
+          field: "verify_checksum",
+        },
+      });
+    }
+    return {
+      session_id: `${params.upload_input.node_id}:${params.upload_input.container_id}:upload`,
+      node_id: params.upload_input.node_id,
+      container_id: params.upload_input.container_id,
+      source_file_path: params.upload_input.source_file_path,
+      target_file_path: params.upload_input.target_file_path,
+      bytes_uploaded: 1024,
+      elapsed_ms: 50,
+      throughput_bytes_per_sec: 20480,
+      overwrite: params.upload_input.overwrite,
+      verify_checksum: params.upload_input.verify_checksum,
+      checksum_source: params.upload_input.verify_checksum ? "a".repeat(64) : undefined,
+      checksum_target: params.upload_input.verify_checksum ? "a".repeat(64) : undefined,
+      retries: 0,
+      truncated: false,
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      handshake: {
+        backend: "ssh_pct",
+        transport: "ssh",
+        endpoint: `ssh://${params.node_connection.host}:22`,
+      },
+    };
+  }
+
+  public async uploadDirectory(params: {
+    node_connection: proxmox_node_connection_i;
+    upload_input: {
+      node_id: string;
+      container_id: string;
+      source_directory_path: string;
+      target_directory_path: string;
+      create_parent_directories: boolean;
+      overwrite: boolean;
+      verify_checksum: boolean;
+      timeout_ms: number;
+      chunk_size_bytes: number;
+      high_water_mark_bytes: number;
+      include_patterns?: string[];
+      exclude_patterns?: string[];
+      pattern_mode: "regex" | "glob";
+      symlink_policy: "skip" | "dereference" | "preserve";
+      include_hidden: boolean;
+    };
+  }): Promise<proxmox_lxc_upload_directory_result_t> {
+    if (this.upload_should_fail_conflict) {
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_conflict",
+        message: "Target exists.",
+        details: {
+          field: "target_directory_path",
+          value: params.upload_input.target_directory_path,
+        },
+      });
+    }
+    if (this.upload_should_fail_checksum) {
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_checksum_mismatch",
+        message: "Checksum mismatch.",
+        details: {
+          field: "verify_checksum",
+        },
+      });
+    }
+    return {
+      session_id: `${params.upload_input.node_id}:${params.upload_input.container_id}:upload_dir`,
+      node_id: params.upload_input.node_id,
+      container_id: params.upload_input.container_id,
+      source_directory_path: params.upload_input.source_directory_path,
+      target_directory_path: params.upload_input.target_directory_path,
+      files_uploaded: 3,
+      directories_created: 2,
+      bytes_uploaded: 4096,
+      elapsed_ms: 100,
+      throughput_bytes_per_sec: 40960,
+      skipped_count: 0,
+      failed_count: 0,
+      checksum_verified_count: params.upload_input.verify_checksum ? 3 : 0,
+      overwrite: params.upload_input.overwrite,
+      verify_checksum: params.upload_input.verify_checksum,
+      checksum_source: params.upload_input.verify_checksum ? "b".repeat(64) : undefined,
+      checksum_target: params.upload_input.verify_checksum ? "b".repeat(64) : undefined,
+      retries: 0,
+      truncated: false,
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      failed_entries: [],
+      metrics: {
+        logical_bytes_uploaded: 4096,
+        wire_bytes_uploaded: 2048,
+        logical_throughput_bytes_per_sec: 40960,
+        wire_throughput_bytes_per_sec: 20480,
+        phase_timings: {
+          prepare_ms: 10,
+          manifest_ms: 10,
+          archive_ms: 20,
+          transfer_ms: 30,
+          extract_ms: 20,
+          checksum_ms: params.upload_input.verify_checksum ? 10 : 0,
+          total_ms: 100,
+        },
+      },
+      handshake: {
+        backend: "ssh_pct",
+        transport: "ssh",
+        endpoint: `ssh://${params.node_connection.host}:22`,
+      },
+    };
   }
 
   public async sendInput(params: {
@@ -357,6 +521,214 @@ test("openTerminalSession supports send, resize, read events, and close with SSH
     {
       name: "ProxmoxTerminalSessionError",
       message: /not found/i,
+    },
+  );
+});
+
+test("uploadFile validates request and returns typed upload metadata.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_backend = new FakeSshShellBackend();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: ssh_backend,
+  });
+
+  const upload_result = await service.uploadFile({
+    node_id: "node-a",
+    container_id: 105,
+    source_file_path: "/tmp/sample-upload.txt",
+    target_file_path: "/root/sample-upload.txt",
+    verify_checksum: true,
+    chunk_size_bytes: 128 * 1024,
+    high_water_mark_bytes: 128 * 1024,
+  });
+
+  assert.equal(upload_result.node_id, "node-a");
+  assert.equal(upload_result.container_id, "105");
+  assert.equal(upload_result.bytes_uploaded > 0, true);
+  assert.equal(upload_result.verify_checksum, true);
+});
+
+test("uploadFile rejects non-absolute target path.", async () => {
+  const request_client = new FakeRequestClient();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: new FakeSshShellBackend(),
+  });
+
+  await assert.rejects(
+    async () => service.uploadFile({
+      node_id: "node-a",
+      container_id: 105,
+      source_file_path: "/tmp/sample-upload.txt",
+      target_file_path: "relative/path.txt",
+    }),
+    {
+      name: "ProxmoxValidationError",
+      message: /absolute path/i,
+    },
+  );
+});
+
+test("uploadFile surfaces overwrite=false conflict as typed upload error.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_backend = new FakeSshShellBackend();
+  ssh_backend.upload_should_fail_conflict = true;
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: ssh_backend,
+  });
+
+  await assert.rejects(
+    async () => service.uploadFile({
+      node_id: "node-a",
+      container_id: 105,
+      source_file_path: "/tmp/sample-upload.txt",
+      target_file_path: "/root/sample-upload.txt",
+      overwrite: false,
+    }),
+    {
+      name: "ProxmoxLxcUploadError",
+      message: /target exists/i,
+    },
+  );
+});
+
+test("uploadFile surfaces checksum mismatch as typed upload error.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_backend = new FakeSshShellBackend();
+  ssh_backend.upload_should_fail_checksum = true;
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: ssh_backend,
+  });
+
+  await assert.rejects(
+    async () => service.uploadFile({
+      node_id: "node-a",
+      container_id: 105,
+      source_file_path: "/tmp/sample-upload.txt",
+      target_file_path: "/root/sample-upload.txt",
+      verify_checksum: true,
+    }),
+    {
+      name: "ProxmoxLxcUploadError",
+      message: /checksum mismatch/i,
+    },
+  );
+});
+
+test("uploadDirectory validates request and returns typed upload metadata.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_backend = new FakeSshShellBackend();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: ssh_backend,
+  });
+
+  const upload_result = await service.uploadDirectory({
+    node_id: "node-a",
+    container_id: 105,
+    source_directory_path: "/tmp/source-dir",
+    target_directory_path: "/root/target-dir",
+    verify_checksum: true,
+      include_patterns: ["^nested/"],
+      exclude_patterns: ["\\.tmp$"],
+      pattern_mode: "regex",
+      symlink_policy: "skip",
+      include_hidden: true,
+  });
+
+  assert.equal(upload_result.node_id, "node-a");
+  assert.equal(upload_result.container_id, "105");
+  assert.equal(upload_result.files_uploaded > 0, true);
+  assert.equal(upload_result.verify_checksum, true);
+});
+
+test("uploadDirectory rejects parent traversal in target path.", async () => {
+  const request_client = new FakeRequestClient();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: new FakeSshShellBackend(),
+  });
+
+  await assert.rejects(
+    async () => service.uploadDirectory({
+      node_id: "node-a",
+      container_id: 105,
+      source_directory_path: "/tmp/source-dir",
+      target_directory_path: "/tmp/../etc",
+    }),
+    {
+      name: "ProxmoxValidationError",
+      message: /parent path traversal/i,
+    },
+  );
+});
+
+test("uploadDirectory accepts glob matcher mode and patterns.", async () => {
+  const request_client = new FakeRequestClient();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: new FakeSshShellBackend(),
+  });
+
+  const upload_result = await service.uploadDirectory({
+    node_id: "node-a",
+    container_id: 105,
+    source_directory_path: "/tmp/source-dir",
+    target_directory_path: "/root/target-dir",
+    pattern_mode: "glob",
+    include_patterns: ["nested/**", "root.txt"],
+    exclude_patterns: ["**/*.tmp"],
+    symlink_policy: "dereference",
+  });
+
+  assert.equal(upload_result.files_uploaded, 3);
+});
+
+test("uploadDirectory rejects invalid include regex patterns.", async () => {
+  const request_client = new FakeRequestClient();
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: new FakeSshShellBackend(),
+  });
+
+  await assert.rejects(
+    async () => service.uploadDirectory({
+      node_id: "node-a",
+      container_id: 105,
+      source_directory_path: "/tmp/source-dir",
+      target_directory_path: "/root/target-dir",
+      include_patterns: ["("],
+    }),
+    {
+      name: "ProxmoxValidationError",
+      message: /invalid regex pattern/i,
+    },
+  );
+});
+
+test("uploadDirectory surfaces overwrite=false conflict as typed upload error.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_backend = new FakeSshShellBackend();
+  ssh_backend.upload_should_fail_conflict = true;
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend: ssh_backend,
+  });
+
+  await assert.rejects(
+    async () => service.uploadDirectory({
+      node_id: "node-a",
+      container_id: 105,
+      source_directory_path: "/tmp/source-dir",
+      target_directory_path: "/root/target-dir",
+      overwrite: false,
+    }),
+    {
+      name: "ProxmoxLxcUploadError",
+      message: /target exists/i,
     },
   );
 });

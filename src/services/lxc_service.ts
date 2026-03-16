@@ -2,8 +2,8 @@ import { proxmox_http_method_t } from "../types/proxmox_http_types";
 import { proxmox_node_connection_i, proxmox_request_client_i } from "../core/request/proxmox_request_client";
 import { TaskPoller, proxmox_task_result_t } from "../core/task/task_poller";
 import {
-  ProxmoxCommandExitError,
   ProxmoxLxcExecError,
+  ProxmoxLxcUploadError,
   ProxmoxTerminalSessionError,
   ProxmoxValidationError,
 } from "../errors/proxmox_error";
@@ -30,6 +30,12 @@ import {
   proxmox_lxc_task_result_t,
   proxmox_lxc_run_command_input_i,
   proxmox_lxc_run_command_result_t,
+  proxmox_lxc_upload_file_input_i,
+  proxmox_lxc_upload_file_result_t,
+  proxmox_lxc_upload_directory_input_i,
+  proxmox_lxc_upload_directory_pattern_mode_t,
+  proxmox_lxc_upload_directory_result_t,
+  proxmox_lxc_upload_directory_symlink_policy_t,
   proxmox_lxc_terminal_open_input_i,
   proxmox_lxc_terminal_session_t,
   proxmox_lxc_terminal_event_t,
@@ -371,6 +377,171 @@ export class LxcService {
     });
     this.command_results.set(ssh_result.session_id, ssh_result);
     return ssh_result;
+  }
+
+  /**
+   * Example:
+   * const upload_result = await client.lxc_service.uploadFile({
+   *   node_id: "pve1",
+   *   container_id: 101,
+   *   source_file_path: "/tmp/config.yaml",
+   *   target_file_path: "/root/config.yaml",
+   *   verify_checksum: true,
+   * });
+   */
+  public async uploadFile(params: proxmox_lxc_upload_file_input_i): Promise<proxmox_lxc_upload_file_result_t> {
+    const reference = BuildLxcReference(params);
+    const normalized = NormalizeUploadFileInput(params);
+    const container_status_response = await this.getContainer({
+      node_id: reference.node_id,
+      container_id: reference.container_id,
+    });
+    const container_status = ResolveContainerStatus(container_status_response.data as Record<string, unknown>);
+    if (container_status !== undefined && container_status.toLowerCase() !== "running") {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: "uploadFile requires a running container.",
+        details: {
+          field: "container.status",
+          value: container_status,
+        },
+      });
+    }
+
+    const node_connection = this.request_client.resolveNode(reference.node_id);
+    if (!ShouldUseSshShellBackend(node_connection)) {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: "LXC uploadFile requires node shell_backend=ssh_pct with ssh_shell configuration.",
+        details: {
+          field: "node.ssh_shell",
+          value: node_connection.node_id,
+        },
+      });
+    }
+
+    try {
+      return await this.ssh_pct_shell_backend.uploadFile({
+        node_connection,
+        upload_input: {
+          node_id: reference.node_id,
+          container_id: reference.container_id,
+          source_file_path: normalized.source_file_path,
+          target_file_path: normalized.target_file_path,
+          owner_user: normalized.owner_user,
+          owner_group: normalized.owner_group,
+          mode_octal: normalized.mode_octal,
+          create_parent_directories: normalized.create_parent_directories,
+          overwrite: normalized.overwrite,
+          verify_checksum: normalized.verify_checksum,
+          timeout_ms: normalized.timeout_ms,
+          chunk_size_bytes: normalized.chunk_size_bytes,
+          high_water_mark_bytes: normalized.high_water_mark_bytes,
+        },
+      });
+    } catch (error) {
+      if (error instanceof ProxmoxLxcUploadError || error instanceof ProxmoxValidationError) {
+        throw error;
+      }
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_transfer_failed",
+        message: "LXC file upload failed.",
+        details: {
+          field: "lxc.upload_file",
+          value: `${reference.node_id}/${reference.container_id}`,
+        },
+        cause: error,
+      });
+    }
+  }
+
+  /**
+   * Example:
+   * const upload_result = await client.lxc_service.uploadDirectory({
+   *   node_id: "pve1",
+   *   container_id: 101,
+   *   source_directory_path: "/tmp/app-config",
+   *   target_directory_path: "/opt/app-config",
+   *   overwrite: true,
+   * });
+   */
+  public async uploadDirectory(
+    params: proxmox_lxc_upload_directory_input_i,
+  ): Promise<proxmox_lxc_upload_directory_result_t> {
+    const reference = BuildLxcReference(params);
+    const normalized = NormalizeUploadDirectoryInput(params);
+    const container_status_response = await this.getContainer({
+      node_id: reference.node_id,
+      container_id: reference.container_id,
+    });
+    const container_status = ResolveContainerStatus(
+      container_status_response.data as Record<string, unknown>,
+    );
+    if (
+      container_status !== undefined &&
+      container_status.toLowerCase() !== "running"
+    ) {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: "uploadDirectory requires a running container.",
+        details: {
+          field: "container.status",
+          value: container_status,
+        },
+      });
+    }
+
+    const node_connection = this.request_client.resolveNode(reference.node_id);
+    if (!ShouldUseSshShellBackend(node_connection)) {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message:
+          "LXC uploadDirectory requires node shell_backend=ssh_pct with ssh_shell configuration.",
+        details: {
+          field: "node.ssh_shell",
+          value: node_connection.node_id,
+        },
+      });
+    }
+
+    try {
+      return await this.ssh_pct_shell_backend.uploadDirectory({
+        node_connection,
+        upload_input: {
+          node_id: reference.node_id,
+          container_id: reference.container_id,
+          source_directory_path: normalized.source_directory_path,
+          target_directory_path: normalized.target_directory_path,
+          create_parent_directories: normalized.create_parent_directories,
+          overwrite: normalized.overwrite,
+          verify_checksum: normalized.verify_checksum,
+          timeout_ms: normalized.timeout_ms,
+          chunk_size_bytes: normalized.chunk_size_bytes,
+          high_water_mark_bytes: normalized.high_water_mark_bytes,
+          include_patterns: normalized.include_patterns,
+          exclude_patterns: normalized.exclude_patterns,
+          pattern_mode: normalized.pattern_mode,
+          symlink_policy: normalized.symlink_policy,
+          include_hidden: normalized.include_hidden,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof ProxmoxLxcUploadError ||
+        error instanceof ProxmoxValidationError
+      ) {
+        throw error;
+      }
+      throw new ProxmoxLxcUploadError({
+        code: "proxmox.lxc.upload_directory_extract_failed",
+        message: "LXC directory upload failed.",
+        details: {
+          field: "lxc.upload_directory",
+          value: `${reference.node_id}/${reference.container_id}`,
+        },
+        cause: error,
+      });
+    }
   }
 
   /**
@@ -874,6 +1045,15 @@ function ValidateSnapshotName(snapshot_name: string): string {
   return normalized;
 }
 
+function ResolveContainerStatus(raw_record: Record<string, unknown>): string | undefined {
+  const status = raw_record.status;
+  if (typeof status !== "string") {
+    return undefined;
+  }
+  const normalized = status.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function NormalizeRunCommandInput(params: proxmox_lxc_run_command_input_i): {
   command_argv: string[];
   shell_mode: boolean;
@@ -981,6 +1161,413 @@ function NormalizeTerminalOpenInput(params: proxmox_lxc_terminal_open_input_i): 
     timeout_ms: params.timeout_ms,
     retry_allowed: params.retry_allowed,
   };
+}
+
+function NormalizeUploadFileInput(params: proxmox_lxc_upload_file_input_i): {
+  source_file_path: string;
+  target_file_path: string;
+  owner_user?: string;
+  owner_group?: string;
+  mode_octal?: string;
+  create_parent_directories: boolean;
+  overwrite: boolean;
+  verify_checksum: boolean;
+  timeout_ms: number;
+  chunk_size_bytes: number;
+  high_water_mark_bytes: number;
+} {
+  const source_file_path = ValidateSourceFilePath(params.source_file_path);
+  const target_file_path = ValidateTargetFilePath(params.target_file_path);
+  const owner_user = ValidateOptionalOwnerName({
+    raw_owner: params.owner_user,
+    field_name: "owner_user",
+  });
+  const owner_group = ValidateOptionalOwnerName({
+    raw_owner: params.owner_group,
+    field_name: "owner_group",
+  });
+  const mode_octal = ValidateOptionalModeOctal(params.mode_octal);
+  const create_parent_directories = params.create_parent_directories === true;
+  const overwrite = params.overwrite !== false;
+  const verify_checksum = params.verify_checksum === true;
+  const timeout_ms = ValidatePositiveInteger({
+    raw_value: params.timeout_ms ?? 120000,
+    field_name: "timeout_ms",
+    minimum: 1000,
+    maximum: 600000,
+  });
+  const chunk_size_bytes = ValidatePositiveInteger({
+    raw_value: params.chunk_size_bytes ?? 256 * 1024,
+    field_name: "chunk_size_bytes",
+    minimum: 16 * 1024,
+    maximum: 8 * 1024 * 1024,
+  });
+  const high_water_mark_bytes = ValidatePositiveInteger({
+    raw_value: params.high_water_mark_bytes ?? 256 * 1024,
+    field_name: "high_water_mark_bytes",
+    minimum: 16 * 1024,
+    maximum: 8 * 1024 * 1024,
+  });
+
+  return {
+    source_file_path,
+    target_file_path,
+    owner_user,
+    owner_group,
+    mode_octal,
+    create_parent_directories,
+    overwrite,
+    verify_checksum,
+    timeout_ms,
+    chunk_size_bytes,
+    high_water_mark_bytes,
+  };
+}
+
+function NormalizeUploadDirectoryInput(params: proxmox_lxc_upload_directory_input_i): {
+  source_directory_path: string;
+  target_directory_path: string;
+  create_parent_directories: boolean;
+  overwrite: boolean;
+  verify_checksum: boolean;
+  timeout_ms: number;
+  chunk_size_bytes: number;
+  high_water_mark_bytes: number;
+  include_patterns?: string[];
+  exclude_patterns?: string[];
+  pattern_mode: proxmox_lxc_upload_directory_pattern_mode_t;
+  symlink_policy: proxmox_lxc_upload_directory_symlink_policy_t;
+  include_hidden: boolean;
+} {
+  const source_directory_path = ValidateSourceDirectoryPath(params.source_directory_path);
+  const target_directory_path = ValidateTargetFilePath(params.target_directory_path);
+  const create_parent_directories = params.create_parent_directories !== false;
+  const overwrite = params.overwrite !== false;
+  const verify_checksum = params.verify_checksum === true;
+  const timeout_ms = ValidatePositiveInteger({
+    raw_value: params.timeout_ms ?? 300000,
+    field_name: "timeout_ms",
+    minimum: 1000,
+    maximum: 1800000,
+  });
+  const chunk_size_bytes = ValidatePositiveInteger({
+    raw_value: params.chunk_size_bytes ?? 256 * 1024,
+    field_name: "chunk_size_bytes",
+    minimum: 16 * 1024,
+    maximum: 8 * 1024 * 1024,
+  });
+  const high_water_mark_bytes = ValidatePositiveInteger({
+    raw_value: params.high_water_mark_bytes ?? 256 * 1024,
+    field_name: "high_water_mark_bytes",
+    minimum: 16 * 1024,
+    maximum: 8 * 1024 * 1024,
+  });
+  const include_patterns = ValidatePatternList({
+    raw_patterns: params.include_patterns,
+    field_name: "include_patterns",
+    pattern_mode: params.pattern_mode ?? "regex",
+  });
+  const exclude_patterns = ValidatePatternList({
+    raw_patterns: params.exclude_patterns,
+    field_name: "exclude_patterns",
+    pattern_mode: params.pattern_mode ?? "regex",
+  });
+  const pattern_mode = ValidateDirectoryPatternMode(params.pattern_mode);
+  const symlink_policy = ValidateSymlinkPolicy(params.symlink_policy);
+  const include_hidden = params.include_hidden !== false;
+
+  return {
+    source_directory_path,
+    target_directory_path,
+    create_parent_directories,
+    overwrite,
+    verify_checksum,
+    timeout_ms,
+    chunk_size_bytes,
+    high_water_mark_bytes,
+    include_patterns,
+    exclude_patterns,
+    pattern_mode,
+    symlink_policy,
+    include_hidden,
+  };
+}
+
+function ValidateSourceFilePath(raw_source_file_path: string): string {
+  const normalized = raw_source_file_path.trim();
+  if (!normalized) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "source_file_path is required.",
+      details: {
+        field: "source_file_path",
+      },
+    });
+  }
+  if (normalized.includes("\0")) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "source_file_path contains invalid null-byte character.",
+      details: {
+        field: "source_file_path",
+      },
+    });
+  }
+  return normalized;
+}
+
+function ValidateSourceDirectoryPath(raw_source_directory_path: string): string {
+  const normalized = raw_source_directory_path.trim();
+  if (!normalized) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "source_directory_path is required.",
+      details: {
+        field: "source_directory_path",
+      },
+    });
+  }
+  if (normalized.includes("\0")) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "source_directory_path contains invalid null-byte character.",
+      details: {
+        field: "source_directory_path",
+      },
+    });
+  }
+  return normalized;
+}
+
+function ValidateTargetFilePath(raw_target_file_path: string): string {
+  const normalized = raw_target_file_path.trim();
+  if (!normalized) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "target_file_path is required.",
+      details: {
+        field: "target_file_path",
+      },
+    });
+  }
+  if (!normalized.startsWith("/")) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "target_file_path must be an absolute path.",
+      details: {
+        field: "target_file_path",
+      },
+    });
+  }
+  if (normalized.includes("\0")) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "target_file_path contains invalid null-byte character.",
+      details: {
+        field: "target_file_path",
+      },
+    });
+  }
+  const path_segments = normalized.split("/").filter((segment) => segment.length > 0);
+  if (path_segments.includes("..")) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "target_file_path must not contain parent path traversal segments.",
+      details: {
+        field: "target_file_path",
+      },
+    });
+  }
+  const disallowed_prefixes = ["/proc/", "/sys/", "/dev/"];
+  for (const disallowed_prefix of disallowed_prefixes) {
+    if (normalized === disallowed_prefix.slice(0, -1) || normalized.startsWith(disallowed_prefix)) {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: "target_file_path points to a restricted filesystem path.",
+        details: {
+          field: "target_file_path",
+        },
+      });
+    }
+  }
+  return normalized;
+}
+
+function ValidatePatternList(params: {
+  raw_patterns: string[] | undefined;
+  field_name: string;
+  pattern_mode: proxmox_lxc_upload_directory_pattern_mode_t;
+}): string[] | undefined {
+  if (params.raw_patterns === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(params.raw_patterns)) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: `${params.field_name} must be an array of regex pattern strings.`,
+      details: {
+        field: params.field_name,
+      },
+    });
+  }
+  const normalized_patterns: string[] = [];
+  for (const raw_pattern of params.raw_patterns) {
+    if (typeof raw_pattern !== "string") {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: `${params.field_name} entries must be strings.`,
+        details: {
+          field: params.field_name,
+        },
+      });
+    }
+    const normalized_pattern = raw_pattern.trim();
+    if (normalized_pattern.length === 0) {
+      throw new ProxmoxValidationError({
+        code: "proxmox.validation.invalid_input",
+        message: `${params.field_name} entries cannot be empty.`,
+        details: {
+          field: params.field_name,
+        },
+      });
+    }
+    if (params.pattern_mode === "regex") {
+      try {
+        // Validate syntax only; matcher compilation happens in backend.
+        new RegExp(normalized_pattern);
+      } catch {
+        throw new ProxmoxValidationError({
+          code: "proxmox.validation.invalid_input",
+          message: `${params.field_name} contains an invalid regex pattern.`,
+          details: {
+            field: params.field_name,
+            value: normalized_pattern,
+          },
+        });
+      }
+    }
+    if (params.pattern_mode === "glob") {
+      if (normalized_pattern.includes("\0")) {
+        throw new ProxmoxValidationError({
+          code: "proxmox.validation.invalid_input",
+          message: `${params.field_name} contains invalid null-byte characters.`,
+          details: {
+            field: params.field_name,
+            value: normalized_pattern,
+          },
+        });
+      }
+    }
+    normalized_patterns.push(normalized_pattern);
+  }
+  return normalized_patterns.length > 0 ? normalized_patterns : undefined;
+}
+
+function ValidateDirectoryPatternMode(
+  raw_pattern_mode: proxmox_lxc_upload_directory_pattern_mode_t | undefined,
+): proxmox_lxc_upload_directory_pattern_mode_t {
+  const pattern_mode = raw_pattern_mode ?? "regex";
+  if (pattern_mode !== "regex" && pattern_mode !== "glob") {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "pattern_mode must be regex or glob.",
+      details: {
+        field: "pattern_mode",
+        value: String(raw_pattern_mode),
+      },
+    });
+  }
+  return pattern_mode;
+}
+
+function ValidateSymlinkPolicy(
+  raw_symlink_policy: proxmox_lxc_upload_directory_symlink_policy_t | undefined,
+): proxmox_lxc_upload_directory_symlink_policy_t {
+  const symlink_policy = raw_symlink_policy ?? "skip";
+  if (
+    symlink_policy !== "skip"
+    && symlink_policy !== "dereference"
+    && symlink_policy !== "preserve"
+  ) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "symlink_policy must be skip, dereference, or preserve.",
+      details: {
+        field: "symlink_policy",
+        value: String(raw_symlink_policy),
+      },
+    });
+  }
+  return symlink_policy;
+}
+
+function ValidateOptionalOwnerName(params: {
+  raw_owner: string | undefined;
+  field_name: string;
+}): string | undefined {
+  if (params.raw_owner === undefined) {
+    return undefined;
+  }
+  const normalized = params.raw_owner.trim();
+  if (!normalized) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: `${params.field_name} cannot be empty when provided.`,
+      details: {
+        field: params.field_name,
+      },
+    });
+  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(normalized)) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: `${params.field_name} contains unsupported characters.`,
+      details: {
+        field: params.field_name,
+      },
+    });
+  }
+  return normalized;
+}
+
+function ValidateOptionalModeOctal(raw_mode_octal: string | undefined): string | undefined {
+  if (raw_mode_octal === undefined) {
+    return undefined;
+  }
+  const normalized = raw_mode_octal.trim();
+  if (!/^[0-7]{3,4}$/.test(normalized)) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: "mode_octal must be a 3 or 4 digit octal value.",
+      details: {
+        field: "mode_octal",
+      },
+    });
+  }
+  return normalized;
+}
+
+function ValidatePositiveInteger(params: {
+  raw_value: number;
+  field_name: string;
+  minimum: number;
+  maximum: number;
+}): number {
+  if (
+    !Number.isInteger(params.raw_value)
+    || params.raw_value < params.minimum
+    || params.raw_value > params.maximum
+  ) {
+    throw new ProxmoxValidationError({
+      code: "proxmox.validation.invalid_input",
+      message: `${params.field_name} must be an integer between ${params.minimum} and ${params.maximum}.`,
+      details: {
+        field: params.field_name,
+        value: String(params.raw_value),
+      },
+    });
+  }
+  return params.raw_value;
 }
 
 function ValidateTerminalSize(params: {

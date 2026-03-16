@@ -6,6 +6,8 @@ TypeScript SDK for interacting with Proxmox VE clusters with typed service contr
 
 - LXC shell operations are now SSH-only via backend mode `ssh_pct`.
 - One-off command execution runs through `pct exec`.
+- Direct file upload into running LXC containers is available via `lxc_service.uploadFile` (SSH stream + `pct push`).
+- Recursive directory upload into running LXC containers is available via `lxc_service.uploadDirectory` (SSH tar stream + in-container extract).
 - Interactive shell sessions run through `pct enter` with PTY lifecycle methods.
 - Legacy `termproxy`/`vncwebsocket` terminal paths are removed.
 - Legacy `privileged_fallback` / `node_execute` fallback config is removed from active SDK flow.
@@ -126,6 +128,8 @@ Runtime layers:
 - `snapshotContainer`
 - `restoreContainer`
 - `runCommand` (SSH `pct exec`)
+- `uploadFile` (SSH stream transfer + `pct push`)
+- `uploadDirectory` (SSH streamed archive transfer + extract)
 - `openTerminalSession` (SSH `pct enter`)
 - `sendTerminalInput`
 - `resizeTerminal`
@@ -137,6 +141,8 @@ Runtime layers:
 ### LXC shell capabilities (SSH-only)
 
 - one-off command execution: `runCommand`
+- high-performance direct file upload: `uploadFile`
+- recursive directory upload: `uploadDirectory`
 - interactive terminal lifecycle:
   - `openTerminalSession`
   - `sendTerminalInput`
@@ -1120,6 +1126,9 @@ if (execute_mutations) {
 - `PROXMOX_EXAMPLE_LXC_DESTROY_DRY_RUN` (optional destroy dry-run toggle)
 - `PROXMOX_EXAMPLE_LXC_EXPECT_SMOKE_RUN` (set true to run `lxc_expect_service.runScript` smoke flow against the configured LXC smoke target)
 - `PROXMOX_EXAMPLE_LXC_EXPECT_CALLBACK_SMOKE_RUN` (set true to include callback matcher step in expect smoke flow)
+- `PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_RUN` (set true to run non-destructive `lxc_service.uploadFile` smoke flow)
+- `PROXMOX_EXAMPLE_LXC_UPLOAD_SOURCE_FILE_PATH` (optional local source file for upload smoke; defaults to ephemeral `/tmp` file)
+- `PROXMOX_EXAMPLE_LXC_UPLOAD_TARGET_FILE_PATH` (optional in-container target path for upload smoke, default: `/tmp/proxmox-sdk-upload-smoke.txt`)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_RUN` (optional boolean, default: `true`, enables non-destructive LXC shell smoke flow)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_NODE_ID` (optional smoke node override, default: `g75`)
 - `PROXMOX_EXAMPLE_LXC_SMOKE_CONTAINER_ID` (optional smoke container override, default: `100`)
@@ -1190,6 +1199,7 @@ Primary error types:
 - `ProxmoxTransportError`: connection/certificate/network-level failures
 - `ProxmoxHttpError`: non-auth HTTP API failures (4xx/5xx mapping)
 - `ProxmoxNotFoundError`, `ProxmoxConflictError`, `ProxmoxRateLimitError`, `ProxmoxTaskError`: specialized HTTP/task classes
+- `ProxmoxLxcUploadError`: LXC upload-specific source/transfer/push/checksum/timeout/conflict failures
 - `ProxmoxError`: base class (includes `.code`, `.details`, optional `.cause`)
 
 Concise safe handling pattern:
@@ -1242,6 +1252,141 @@ try {
 } catch (error) {
   if (error instanceof ProxmoxCommandExitError) {
     console.error('Command failed with non-zero exit:', error.details);
+  }
+}
+```
+
+Direct file upload into running LXC container filesystem (streamed):
+
+```ts
+import { ProxmoxClient, ProxmoxLxcUploadError } from '@opsimathically/proxmox';
+
+const client = ProxmoxClient.fromPath({
+  config_path: '/home/tourist/environment_files/proxmoxlib/proxmoxlib.json',
+  profile_name: process.env.PROXMOXLIB_PROFILE ?? 'default'
+});
+
+try {
+  const upload_result = await client.lxc_service.uploadFile({
+    node_id: 'pve1',
+    container_id: 101,
+    source_file_path: '/tmp/app-config.yaml',
+    target_file_path: '/root/app-config.yaml',
+    overwrite: true,
+    create_parent_directories: true,
+    verify_checksum: true,
+    chunk_size_bytes: 256 * 1024,
+    high_water_mark_bytes: 256 * 1024
+  });
+
+  console.log(
+    '[upload_file]',
+    {
+      bytes_uploaded: upload_result.bytes_uploaded,
+      elapsed_ms: upload_result.elapsed_ms,
+      throughput_bytes_per_sec: upload_result.throughput_bytes_per_sec,
+      logical_bps: upload_result.metrics?.logical_throughput_bytes_per_sec,
+      wire_bps: upload_result.metrics?.wire_throughput_bytes_per_sec
+    }
+  );
+} catch (error) {
+  if (error instanceof ProxmoxLxcUploadError) {
+    console.error('Upload failed:', error.code, error.details);
+  } else {
+    throw error;
+  }
+}
+```
+
+Recursive directory upload with `pattern_mode: "regex"`:
+
+```ts
+const upload_dir_result = await client.lxc_service.uploadDirectory({
+  node_id: 'pve1',
+  container_id: 101,
+  source_directory_path: '/tmp/app-config',
+  target_directory_path: '/opt/app-config',
+  pattern_mode: 'regex',
+  include_patterns: ['^(config/.*|root\\.env)$'],
+  exclude_patterns: ['\\.tmp$'],
+  symlink_policy: 'skip',
+  include_hidden: false,
+  overwrite: true,
+  verify_checksum: false
+});
+
+console.log('[upload_directory_regex]', {
+  files_uploaded: upload_dir_result.files_uploaded,
+  directories_created: upload_dir_result.directories_created,
+  bytes_uploaded: upload_dir_result.bytes_uploaded,
+  elapsed_ms: upload_dir_result.elapsed_ms,
+  failed_count: upload_dir_result.failed_count
+});
+```
+
+Recursive directory upload with `pattern_mode: "glob"` + symlink preserve:
+
+```ts
+const upload_dir_glob_result = await client.lxc_service.uploadDirectory({
+  node_id: 'pve1',
+  container_id: 101,
+  source_directory_path: '/tmp/release-bundle',
+  target_directory_path: '/opt/release-bundle',
+  pattern_mode: 'glob',
+  include_patterns: ['bin/**', 'config/**/*.yaml', 'README.md'],
+  exclude_patterns: ['**/*.bak', '**/*.tmp'],
+  symlink_policy: 'preserve',
+  include_hidden: false,
+  overwrite: true,
+  verify_checksum: true
+});
+
+console.log('[upload_directory_glob]', {
+  logical_bps: upload_dir_glob_result.metrics?.logical_throughput_bytes_per_sec,
+  wire_bps: upload_dir_glob_result.metrics?.wire_throughput_bytes_per_sec,
+  phase_transfer_ms: upload_dir_glob_result.metrics?.phase_timings.transfer_ms,
+  phase_extract_ms: upload_dir_glob_result.metrics?.phase_timings.extract_ms
+});
+```
+
+Upload notes:
+
+- upload path is SSH-only and optimized for large/binary-safe transfers.
+- implementation streams local file to node temp storage, then uses `pct push` into container.
+- directory upload streams a generated archive through node temp storage, pushes to container temp, then extracts into target directory.
+- set `verify_checksum: true` for integrity checks when needed (disabled by default for speed).
+- `overwrite: false` fails when target file already exists.
+- matcher precedence for directory upload is deterministic:
+  - include patterns are evaluated first (when provided)
+  - exclude patterns are evaluated second and take precedence
+- `pattern_mode`:
+  - `regex`: explicit regular-expression patterns
+  - `glob`: `*`, `**`, `?`, and character-class style patterns
+- symlink handling:
+  - `skip` (recommended default): safest automation profile
+  - `preserve`: keeps safe symlink entries
+  - `dereference`: follows symlinks within source root with loop/traversal protections
+
+Typed upload error handling pattern:
+
+```ts
+import {
+  ProxmoxLxcUploadError,
+  ProxmoxValidationError,
+  ProxmoxAuthError
+} from '@opsimathically/proxmox';
+
+try {
+  // uploadFile(...) or uploadDirectory(...)
+} catch (error) {
+  if (error instanceof ProxmoxLxcUploadError) {
+    console.error('[upload_error]', error.code, error.details);
+  } else if (error instanceof ProxmoxValidationError) {
+    console.error('[upload_validation_error]', error.code, error.details);
+  } else if (error instanceof ProxmoxAuthError) {
+    console.error('[upload_auth_error]', error.code);
+  } else {
+    throw error;
   }
 }
 ```
@@ -1574,10 +1719,13 @@ Main().catch((error: unknown) => {
 
 - SDK runtime can SSH to target Proxmox node(s).
 - `pct` is available on target nodes.
+- `pct push` is available on target nodes for container file upload operations.
 - SSH identity has permission to run `pct exec` / `pct enter` for target containers.
 - LXC target node/container IDs are valid and reachable.
+- upload operations require the target container to be in `running` state.
 - secrets are sourced externally (`env`, `file`, `vault`, `sops`), never hardcoded.
 - production deployments use strict host verification (`strict_host_key`, fingerprint or known-hosts).
+- for smoke/CI upload tests, prefer writing under `/tmp` and remove uploaded test artifacts after validation.
 
 ## Known limitations / next steps
 
@@ -1643,6 +1791,33 @@ Test coverage structure (high level):
 - keep SSH credentials in secret sources (`env`, `file`, `sops`, `vault`), never in code.
 - prefer strict host verification with `strict_host_key` and `host_fingerprint_sha256`.
 - ensure target node allows the configured SSH auth method and has `pct` available in path.
+
+## Upload hardening notes (file and directory)
+
+- `uploadFile` and `uploadDirectory` now publish structured `metrics` with:
+  - logical bytes throughput
+  - wire bytes throughput
+  - per-phase timings (`prepare`, `manifest`, `archive`, `transfer`, `extract`, `checksum`, `total`)
+- directory upload include/exclude supports `pattern_mode`:
+  - `regex` (default, backward-compatible)
+  - `glob` (`*`, `**`, `?`, character classes)
+- matcher precedence is deterministic:
+  - include patterns are applied first (if present)
+  - exclude patterns are applied second and win on conflicts
+- symlink policies:
+  - `skip`: omit symlink entries
+  - `preserve`: include symlink entry only when target is safe (no absolute/parent traversal)
+  - `dereference`: follow symlink targets inside source root with loop detection and depth guard
+- path safety guardrails:
+  - target upload paths reject null bytes and traversal segments
+  - source-relative archive entries reject absolute and `..` traversal paths
+  - dereferenced symlink targets outside source root are blocked
+- recommended production defaults:
+  - `pattern_mode: "regex"` unless teams explicitly prefer glob matching
+  - `symlink_policy: "skip"` for least-risk automation
+  - `verify_checksum: true` for critical payloads, `false` for raw throughput benchmarking
+  - explicit `timeout_ms` for large artifacts
+  - `include_hidden: false` unless hidden files are explicitly required
 
 ## Public package surface
 

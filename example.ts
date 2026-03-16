@@ -1,4 +1,8 @@
 import {
+  unlink,
+  writeFile
+} from 'node:fs/promises';
+import {
   EmitStartupDiagnostics,
   LoadConfig,
   ProxmoxAuthError,
@@ -8,6 +12,7 @@ import {
   ProxmoxError,
   ProxmoxHttpError,
   ProxmoxLxcExecError,
+  ProxmoxLxcUploadError,
   ProxmoxRateLimitError,
   ProxmoxTerminalSessionError,
   ProxmoxTimeoutError,
@@ -2663,6 +2668,136 @@ async function Main(): Promise<void> {
       );
     }
 
+    const lxc_upload_smoke_run =
+      process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_RUN === undefined
+        ? true
+        : NormalizeBoolean(process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_RUN);
+    if (!lxc_upload_smoke_run) {
+      console.info(
+        '[example] lxc_upload_smoke_skipped reason=PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_RUN_disabled'
+      );
+    } else {
+      const lxc_upload_smoke_target_path =
+        process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_TARGET_FILE_PATH?.trim() ||
+        '/tmp/proxmox-sdk-upload-smoke.txt';
+      const lxc_upload_smoke_source_file_override =
+        process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_SOURCE_FILE_PATH?.trim() ||
+        undefined;
+      const lxc_upload_smoke_verify_checksum =
+        process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_VERIFY_CHECKSUM === undefined
+          ? true
+          : NormalizeBoolean(
+              process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_VERIFY_CHECKSUM
+            );
+      const lxc_upload_smoke_overwrite =
+        process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_OVERWRITE === undefined
+          ? true
+          : NormalizeBoolean(process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_OVERWRITE);
+      const lxc_upload_smoke_cleanup = NormalizeBoolean(
+        process.env.PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_CLEANUP
+      );
+      const lxc_upload_smoke_source_path =
+        lxc_upload_smoke_source_file_override ??
+        `/tmp/proxmox-sdk-upload-smoke-${Date.now()}.txt`;
+      const lxc_upload_smoke_generated_source =
+        lxc_upload_smoke_source_file_override === undefined;
+      const lxc_upload_smoke_marker =
+        lxc_upload_smoke_generated_source
+          ? `SDK_UPLOAD_SMOKE_OK_${Date.now()}`
+          : undefined;
+      if (lxc_upload_smoke_generated_source) {
+        const lxc_upload_smoke_payload = `${lxc_upload_smoke_marker ?? 'SDK_UPLOAD_SMOKE_OK'}\n`;
+        await writeFile(lxc_upload_smoke_source_path, lxc_upload_smoke_payload, {
+          encoding: 'utf8',
+          mode: 0o600
+        });
+      }
+      try {
+        const upload_result = await proxmox_client.lxc_service.uploadFile({
+          node_id: lxc_smoke_node_id,
+          container_id: lxc_smoke_container_id,
+          source_file_path: lxc_upload_smoke_source_path,
+          target_file_path: lxc_upload_smoke_target_path,
+          overwrite: lxc_upload_smoke_overwrite,
+          verify_checksum: lxc_upload_smoke_verify_checksum,
+          create_parent_directories: true
+        });
+        console.info(
+          `[example] lxc_upload_smoke_result session_id=${upload_result.session_id} bytes_uploaded=${upload_result.bytes_uploaded} elapsed_ms=${upload_result.elapsed_ms} throughput_bytes_per_sec=${upload_result.throughput_bytes_per_sec} verify_checksum=${upload_result.verify_checksum} target_file_path=${upload_result.target_file_path}`
+        );
+
+        const exists_check_result = await proxmox_client.lxc_service.runCommand({
+          node_id: lxc_smoke_node_id,
+          container_id: lxc_smoke_container_id,
+          command_argv: ['test', '-f', lxc_upload_smoke_target_path],
+          timeout_ms: lxc_smoke_timeout_ms,
+          max_output_bytes: 64 * 1024,
+          fail_on_non_zero_exit: false
+        });
+        const exists_check_passed = exists_check_result.exit_code === 0;
+
+        let marker_found = false;
+        if (lxc_upload_smoke_marker !== undefined) {
+          const marker_check_result = await proxmox_client.lxc_service.runCommand({
+            node_id: lxc_smoke_node_id,
+            container_id: lxc_smoke_container_id,
+            command_argv: [
+              'grep',
+              '-F',
+              lxc_upload_smoke_marker,
+              lxc_upload_smoke_target_path
+            ],
+            timeout_ms: lxc_smoke_timeout_ms,
+            max_output_bytes: 64 * 1024,
+            fail_on_non_zero_exit: false
+          });
+          marker_found = marker_check_result.exit_code === 0;
+        }
+
+        console.info(
+          `[example] lxc_upload_smoke_verify exists=${exists_check_passed} marker_checked=${lxc_upload_smoke_marker !== undefined} marker_found=${marker_found}`
+        );
+        if (!exists_check_passed) {
+          throw new Error(
+            `Upload smoke verification failed: file missing at ${lxc_upload_smoke_target_path}`
+          );
+        }
+        if (lxc_upload_smoke_marker !== undefined && !marker_found) {
+          throw new Error(
+            `Upload smoke verification failed: marker not found at ${lxc_upload_smoke_target_path}`
+          );
+        }
+
+        if (lxc_upload_smoke_cleanup) {
+          await proxmox_client.lxc_service.runCommand({
+            node_id: lxc_smoke_node_id,
+            container_id: lxc_smoke_container_id,
+            command_argv: ['rm', '-f', lxc_upload_smoke_target_path],
+            timeout_ms: lxc_smoke_timeout_ms,
+            max_output_bytes: 64 * 1024,
+            fail_on_non_zero_exit: true
+          });
+          console.info(
+            `[example] lxc_upload_smoke_cleanup removed=true target_file_path=${lxc_upload_smoke_target_path}`
+          );
+        } else {
+          console.info(
+            '[example] lxc_upload_smoke_cleanup skipped reason=PROXMOX_EXAMPLE_LXC_UPLOAD_SMOKE_CLEANUP_not_true'
+          );
+        }
+      } finally {
+        if (lxc_upload_smoke_generated_source) {
+          try {
+            await unlink(lxc_upload_smoke_source_path);
+          } catch {
+            console.warn(
+              '[example] lxc_upload_smoke_local_cleanup_warning reason=temporary_source_unlink_failed'
+            );
+          }
+        }
+      }
+    }
+
     const terminal_session = await proxmox_client.lxc_service.openTerminalSession({
       node_id: lxc_smoke_node_id,
       container_id: lxc_smoke_container_id,
@@ -3071,6 +3206,7 @@ if (require.main === module) {
   void Main().catch((error: unknown) => {
     if (
       error instanceof ProxmoxLxcExecError ||
+      error instanceof ProxmoxLxcUploadError ||
       error instanceof ProxmoxTerminalSessionError
     ) {
       console.error(

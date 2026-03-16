@@ -39,6 +39,18 @@ export type proxmox_error_code_t =
   | "proxmox.http.server_error"
   | "proxmox.http.client_error"
   | "proxmox.lxc.exec_start_failed"
+  | "proxmox.lxc.upload_source_invalid"
+  | "proxmox.lxc.upload_temp_write_failed"
+  | "proxmox.lxc.upload_directory_source_invalid"
+  | "proxmox.lxc.upload_directory_archive_failed"
+  | "proxmox.lxc.upload_directory_extract_failed"
+  | "proxmox.lxc.upload_directory_path_unsafe"
+  | "proxmox.lxc.upload_transfer_failed"
+  | "proxmox.lxc.upload_push_failed"
+  | "proxmox.lxc.upload_permission_denied"
+  | "proxmox.lxc.upload_checksum_mismatch"
+  | "proxmox.lxc.upload_timeout"
+  | "proxmox.lxc.upload_conflict"
   | "proxmox.lxc.terminal_session_io_failed"
   | "proxmox.lxc.command_timeout"
   | "proxmox.lxc.command_non_zero_exit"
@@ -228,6 +240,14 @@ export class ProxmoxLxcExecError extends ProxmoxError {
     super(params);
     this.name = "ProxmoxLxcExecError";
     Object.setPrototypeOf(this, ProxmoxLxcExecError.prototype);
+  }
+}
+
+export class ProxmoxLxcUploadError extends ProxmoxError {
+  constructor(params: proxmox_error_input_i) {
+    super(params);
+    this.name = "ProxmoxLxcUploadError";
+    Object.setPrototypeOf(this, ProxmoxLxcUploadError.prototype);
   }
 }
 

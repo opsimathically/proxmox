@@ -352,6 +352,61 @@ export interface proxmox_lxc_run_command_input_i extends proxmox_lxc_reference_i
   retry_allowed?: boolean;
 }
 
+export interface proxmox_lxc_upload_file_input_i extends proxmox_lxc_reference_input_i {
+  source_file_path: string;
+  target_file_path: string;
+  owner_user?: string;
+  owner_group?: string;
+  mode_octal?: string;
+  create_parent_directories?: boolean;
+  overwrite?: boolean;
+  verify_checksum?: boolean;
+  timeout_ms?: number;
+  chunk_size_bytes?: number;
+  high_water_mark_bytes?: number;
+}
+
+export interface proxmox_upload_phase_timings_record_i {
+  prepare_ms: number;
+  manifest_ms: number;
+  archive_ms: number;
+  transfer_ms: number;
+  extract_ms: number;
+  checksum_ms: number;
+  total_ms: number;
+}
+
+export interface proxmox_upload_metrics_record_i {
+  logical_bytes_uploaded: number;
+  wire_bytes_uploaded: number;
+  logical_throughput_bytes_per_sec: number;
+  wire_throughput_bytes_per_sec: number;
+  phase_timings: proxmox_upload_phase_timings_record_i;
+}
+
+export type proxmox_lxc_upload_directory_symlink_policy_t =
+  | "skip"
+  | "dereference"
+  | "preserve";
+export type proxmox_lxc_upload_directory_pattern_mode_t = "regex" | "glob";
+
+export interface proxmox_lxc_upload_directory_input_i
+  extends proxmox_lxc_reference_input_i {
+  source_directory_path: string;
+  target_directory_path: string;
+  create_parent_directories?: boolean;
+  overwrite?: boolean;
+  verify_checksum?: boolean;
+  timeout_ms?: number;
+  chunk_size_bytes?: number;
+  high_water_mark_bytes?: number;
+  include_patterns?: string[];
+  exclude_patterns?: string[];
+  pattern_mode?: proxmox_lxc_upload_directory_pattern_mode_t;
+  symlink_policy?: proxmox_lxc_upload_directory_symlink_policy_t;
+  include_hidden?: boolean;
+}
+
 export interface proxmox_lxc_terminal_open_input_i extends proxmox_lxc_reference_input_i {
   command_argv?: string[];
   shell_mode?: boolean;
@@ -441,6 +496,59 @@ export interface proxmox_lxc_run_command_result_record_i {
   stderr: string;
   combined_output: string;
   truncated_output: boolean;
+  handshake: proxmox_lxc_terminal_handshake_record_i;
+}
+
+export interface proxmox_lxc_upload_file_result_record_i {
+  session_id: string;
+  node_id: string;
+  container_id: string;
+  source_file_path: string;
+  target_file_path: string;
+  bytes_uploaded: number;
+  elapsed_ms: number;
+  throughput_bytes_per_sec: number;
+  overwrite: boolean;
+  verify_checksum: boolean;
+  checksum_source?: string;
+  checksum_target?: string;
+  retries: number;
+  truncated: boolean;
+  started_at: string;
+  finished_at: string;
+  metrics?: proxmox_upload_metrics_record_i;
+  handshake: proxmox_lxc_terminal_handshake_record_i;
+}
+
+export interface proxmox_lxc_upload_directory_failed_entry_record_i {
+  relative_path: string;
+  reason: string;
+}
+
+export interface proxmox_lxc_upload_directory_result_record_i {
+  session_id: string;
+  node_id: string;
+  container_id: string;
+  source_directory_path: string;
+  target_directory_path: string;
+  files_uploaded: number;
+  directories_created: number;
+  bytes_uploaded: number;
+  elapsed_ms: number;
+  throughput_bytes_per_sec: number;
+  skipped_count: number;
+  failed_count: number;
+  checksum_verified_count: number;
+  overwrite: boolean;
+  verify_checksum: boolean;
+  checksum_source?: string;
+  checksum_target?: string;
+  retries: number;
+  truncated: boolean;
+  started_at: string;
+  finished_at: string;
+  failed_entries: proxmox_lxc_upload_directory_failed_entry_record_i[];
+  metrics?: proxmox_upload_metrics_record_i;
   handshake: proxmox_lxc_terminal_handshake_record_i;
 }
 
@@ -1662,6 +1770,13 @@ export type proxmox_lxc_task_result_t = proxmox_lxc_task_started_t | proxmox_lxc
 export type proxmox_lxc_terminal_session_t = proxmox_lxc_terminal_session_record_i;
 export type proxmox_lxc_terminal_event_t = proxmox_lxc_terminal_event_record_i;
 export type proxmox_lxc_run_command_result_t = proxmox_lxc_run_command_result_record_i;
+export type proxmox_lxc_upload_file_result_t = proxmox_lxc_upload_file_result_record_i;
+export type proxmox_lxc_upload_directory_failed_entry_t =
+  proxmox_lxc_upload_directory_failed_entry_record_i;
+export type proxmox_lxc_upload_directory_result_t =
+  proxmox_lxc_upload_directory_result_record_i;
+export type proxmox_upload_phase_timings_t = proxmox_upload_phase_timings_record_i;
+export type proxmox_upload_metrics_t = proxmox_upload_metrics_record_i;
 
 export type proxmox_vm_list_response_t = proxmox_api_response_t<proxmox_vm_list_t>;
 export type proxmox_lxc_list_response_t = proxmox_api_response_t<proxmox_lxc_list_t>;

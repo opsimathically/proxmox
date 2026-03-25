@@ -541,10 +541,11 @@ export function BuildRequestClientNode(params: {
   shell_backend?: proxmox_lxc_shell_backend_t;
   ssh_shell?: proxmox_ssh_shell_t;
   auth: {
-    provider: "env" | "file" | "vault" | "sops";
+    provider: "env" | "file" | "vault" | "sops" | "plain";
     env_var?: string;
     file_path?: string;
     secret_ref?: string;
+    plain_text?: string;
     token_id_override?: string;
   };
   token_id: string;
@@ -557,6 +558,7 @@ export function BuildRequestClientNode(params: {
       env_var: params.auth.env_var,
       file_path: params.auth.file_path,
       secret_ref: params.auth.secret_ref,
+      plain_text: params.auth.plain_text,
       token_id_override: params.auth.token_id_override,
     },
   });

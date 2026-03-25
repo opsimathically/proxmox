@@ -163,7 +163,9 @@ class FakeSshShellBackend implements proxmox_lxc_shell_backend_i {
     this.system_cron_probe_text = [
       "__SRC__\t/etc/crontab",
       "SHELL=/bin/sh",
+      "# *  *  *  *  * user-name command to be executed",
       "*/5 * * * * root /usr/local/bin/health-check",
+      "15 4 * * * root /usr/local/bin/inline-test # comment after command",
       "# 0 2 * * * root /usr/local/bin/nightly",
       "__SRC__\t/etc/cron.d/app",
       "@hourly root /opt/app/run-hourly",
@@ -1079,7 +1081,7 @@ test("getCronJobs parses mixed cron sources, disabled entries, special schedules
   });
 
   assert.equal(cron_jobs_result.jobs.length, 5);
-  assert.equal(cron_jobs_result.jobs.some((job_record) => job_record.is_disabled), true);
+  assert.equal(cron_jobs_result.jobs.some((job_record) => job_record.is_disabled), false);
   assert.equal(
     cron_jobs_result.jobs.some((job_record) => job_record.special_schedule === "@hourly"),
     true,
@@ -1094,6 +1096,47 @@ test("getCronJobs parses mixed cron sources, disabled entries, special schedules
     cron_jobs_result.sources_scanned.includes("/var/spool/cron/crontabs/alice"),
     true,
   );
+  assert.equal(
+    cron_jobs_result.jobs.some((job_record) => job_record.command === "/usr/local/bin/inline-test"),
+    true,
+  );
+  assert.equal(
+    cron_jobs_result.jobs.some((job_record) => job_record.raw_line.includes("# *  *  *  *  * user-name command to be executed")),
+    false,
+  );
+});
+
+test("getCronJobs ignores comments, blank lines, and env assignments in comments-only cron sources.", async () => {
+  const request_client = new FakeRequestClient();
+  const ssh_shell_backend = new FakeSshShellBackend();
+  ssh_shell_backend.system_cron_probe_text = [
+    "__SRC__\t/etc/crontab",
+    "# m h dom mon dow user command",
+    "# another comment",
+    "",
+    "SHELL=/bin/sh",
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+  ].join("\n");
+  ssh_shell_backend.user_cron_probe_text = [
+    "__SRC__\t/var/spool/cron/crontabs/alice",
+    "# comment",
+    "",
+    "MAILTO=alice@example.com",
+  ].join("\n");
+  const service = new LxcService({
+    request_client,
+    ssh_shell_backend,
+  });
+
+  const cron_jobs_result = await service.getCronJobs({
+    node_id: "node-a",
+    container_id: 105,
+  });
+
+  assert.equal(cron_jobs_result.jobs.length, 0);
+  assert.equal(cron_jobs_result.parse_warnings.length, 0);
+  assert.equal(cron_jobs_result.sources_scanned.includes("/etc/crontab"), true);
+  assert.equal(cron_jobs_result.sources_scanned.includes("/var/spool/cron/crontabs/alice"), true);
 });
 
 test("getCronJobs supports user-only mode and derives run_as_user from spool path.", async () => {

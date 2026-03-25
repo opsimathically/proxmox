@@ -2,7 +2,7 @@ export type proxmox_schema_version_t = 1;
 export type proxmox_log_level_t = "error" | "warn" | "info" | "debug";
 export type proxmox_env_t = "prod" | "stage" | "dev";
 export type proxmox_protocol_t = "https" | "http";
-export type proxmox_auth_provider_t = "env" | "file" | "vault" | "sops";
+export type proxmox_auth_provider_t = "env" | "file" | "vault" | "sops" | "plain";
 export type proxmox_tls_version_t = "TLSv1.2" | "TLSv1.3";
 export type proxmox_lxc_shell_backend_t = "ssh_pct";
 
@@ -11,6 +11,7 @@ export interface proxmox_auth_i {
   env_var?: string;
   file_path?: string;
   secret_ref?: string;
+  plain_text?: string;
   token_id_override?: string;
 }
 

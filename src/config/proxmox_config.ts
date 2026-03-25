@@ -227,6 +227,10 @@ export function ValidateConfig(params: {
   const security = ResolveSecurity(
     MaybeObject<proxmox_security_i>(LoadOptionalField(config_data, "security", "config")),
   );
+  ValidatePlainAuthPolicy({
+    clusters,
+    security,
+  });
 
   return {
     schema_version,
@@ -357,6 +361,7 @@ export function BuildConfigDiagnostics(params: proxmox_config_diagnostics_lookup
     file: 0,
     vault: 0,
     sops: 0,
+    plain: 0,
   };
   let privileged_auth_node_count = 0;
   for (const proxmox_node of cluster.nodes) {
@@ -452,6 +457,7 @@ async function ResolveAuthToken(
   token_id: string,
   node_id: string,
 ): Promise<string> {
+  void token_id;
   if (auth.provider === "env") {
     if (!auth.env_var) {
       throw new ProxmoxError({
@@ -608,6 +614,20 @@ async function ResolveAuthToken(
         cause: error,
       });
     }
+  }
+
+  if (auth.provider === "plain") {
+    const normalized_plain_text = auth.plain_text?.trim();
+    if (!normalized_plain_text) {
+      throw new ProxmoxError({
+        code: "proxmox.config.auth.missing_token",
+        message: "plain provider is missing plain_text.",
+        details: {
+          field: `nodes.${node_id}.auth.plain_text`,
+        },
+      });
+    }
+    return normalized_plain_text;
   }
 
   if (auth.provider === undefined || auth.provider === "") {
@@ -928,7 +948,7 @@ function ValidateAuth(raw_auth: Record<string, unknown>, path: string): proxmox_
     true,
   ) as proxmox_auth_t["provider"];
 
-  if (provider !== "env" && provider !== "file" && provider !== "vault" && provider !== "sops") {
+  if (provider !== "env" && provider !== "file" && provider !== "vault" && provider !== "sops" && provider !== "plain") {
     throw new ProxmoxError({
       code: "proxmox.config.validation",
       message: "Unsupported auth provider.",
@@ -939,16 +959,52 @@ function ValidateAuth(raw_auth: Record<string, unknown>, path: string): proxmox_
     });
   }
 
+  const plain_text = EnsureOptionalString(LoadOptionalField(raw_auth, "plain_text", path), `${path}.plain_text`);
+  if (provider === "plain" && (!plain_text || plain_text.trim().length === 0)) {
+    throw new ProxmoxError({
+      code: "proxmox.config.validation",
+      message: "plain provider requires plain_text.",
+      details: {
+        field: `${path}.plain_text`,
+      },
+    });
+  }
+
   return {
     provider,
     env_var: EnsureOptionalString(LoadOptionalField(raw_auth, "env_var", path), `${path}.env_var`),
     file_path: EnsureOptionalString(LoadOptionalField(raw_auth, "file_path", path), `${path}.file_path`),
     secret_ref: EnsureOptionalString(LoadOptionalField(raw_auth, "secret_ref", path), `${path}.secret_ref`),
+    plain_text,
     token_id_override: EnsureOptionalString(
       LoadOptionalField(raw_auth, "token_id_override", path),
       `${path}.token_id_override`,
     ),
   };
+}
+
+function ValidatePlainAuthPolicy(params: {
+  clusters: proxmox_cluster_t[];
+  security: proxmox_security_resolved_t;
+}): void {
+  if (params.security.allow_plaintext_api_key_in_file) {
+    return;
+  }
+
+  for (const [cluster_index, proxmox_cluster] of params.clusters.entries()) {
+    for (const [node_index, proxmox_node] of proxmox_cluster.nodes.entries()) {
+      if (proxmox_node.auth.provider === "plain") {
+        throw new ProxmoxError({
+          code: "proxmox.config.validation",
+          message: "plain auth provider is disabled by security.allow_plaintext_api_key_in_file.",
+          details: {
+            field: `config.clusters[${cluster_index}].nodes[${node_index}].auth.provider`,
+            value: proxmox_node.id,
+          },
+        });
+      }
+    }
+  }
 }
 
 function ValidatePrivilegedAuth(

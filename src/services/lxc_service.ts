@@ -5570,20 +5570,11 @@ function ParseCronJobLine(params: {
   if (trimmed_line.length === 0) {
     return {};
   }
-
-  let parse_candidate = trimmed_line;
-  let is_disabled = false;
-  if (trimmed_line.startsWith("#")) {
-    const uncommented_candidate = trimmed_line.replace(/^#+\s*/, "");
-    if (!LooksLikeCronEntry({
-      source_kind: params.source_kind,
-      raw_line: uncommented_candidate,
-    })) {
-      return {};
-    }
-    parse_candidate = uncommented_candidate;
-    is_disabled = true;
+  if (params.raw_line.trimStart().startsWith("#")) {
+    return {};
   }
+  const parse_candidate = trimmed_line;
+  const is_disabled = false;
 
   if (/^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(parse_candidate)) {
     return {};
@@ -5619,12 +5610,24 @@ function ParseCronJobLine(params: {
           }),
         };
       }
+      const normalized_command = NormalizeCronCommand(system_special_match[3]);
+      if (!normalized_command) {
+        return {
+          parse_warning: BuildCronParseWarning({
+            source_path: params.source_path,
+            source_kind: params.source_kind,
+            line_number: params.line_number,
+            raw_line: params.raw_line,
+            reason: "missing_special_cron_command",
+          }),
+        };
+      }
       return {
         job: {
           schedule_expression: special_schedule,
           special_schedule,
           run_as_user: system_special_match[2].trim(),
-          command: system_special_match[3].trim(),
+          command: normalized_command,
           is_disabled,
           source_path: params.source_path,
           source_kind: params.source_kind,
@@ -5634,7 +5637,7 @@ function ParseCronJobLine(params: {
       };
     }
 
-    const user_special_command = special_match[2].trim();
+    const user_special_command = NormalizeCronCommand(special_match[2]);
     if (!user_special_command) {
       return {
         parse_warning: BuildCronParseWarning({
@@ -5676,6 +5679,35 @@ function ParseCronJobLine(params: {
         }),
       };
     }
+    if (!IsCronScheduleValid({
+      minute: system_match[1],
+      hour: system_match[2],
+      day_of_month: system_match[3],
+      month: system_match[4],
+      day_of_week: system_match[5],
+    })) {
+      return {
+        parse_warning: BuildCronParseWarning({
+          source_path: params.source_path,
+          source_kind: params.source_kind,
+          line_number: params.line_number,
+          raw_line: params.raw_line,
+          reason: "invalid_system_cron_schedule",
+        }),
+      };
+    }
+    const normalized_command = NormalizeCronCommand(system_match[7]);
+    if (!normalized_command) {
+      return {
+        parse_warning: BuildCronParseWarning({
+          source_path: params.source_path,
+          source_kind: params.source_kind,
+          line_number: params.line_number,
+          raw_line: params.raw_line,
+          reason: "missing_system_cron_command",
+        }),
+      };
+    }
     return {
       job: {
         schedule_expression: [
@@ -5693,7 +5725,7 @@ function ParseCronJobLine(params: {
           day_of_week: system_match[5],
         },
         run_as_user: system_match[6].trim(),
-        command: system_match[7].trim(),
+        command: normalized_command,
         is_disabled,
         source_path: params.source_path,
         source_kind: params.source_kind,
@@ -5717,6 +5749,35 @@ function ParseCronJobLine(params: {
       }),
     };
   }
+  if (!IsCronScheduleValid({
+    minute: user_match[1],
+    hour: user_match[2],
+    day_of_month: user_match[3],
+      month: user_match[4],
+      day_of_week: user_match[5],
+    })) {
+    return {
+      parse_warning: BuildCronParseWarning({
+        source_path: params.source_path,
+        source_kind: params.source_kind,
+        line_number: params.line_number,
+        raw_line: params.raw_line,
+        reason: "invalid_user_cron_schedule",
+      }),
+    };
+  }
+  const normalized_command = NormalizeCronCommand(user_match[6]);
+  if (!normalized_command) {
+    return {
+      parse_warning: BuildCronParseWarning({
+        source_path: params.source_path,
+        source_kind: params.source_kind,
+        line_number: params.line_number,
+        raw_line: params.raw_line,
+        reason: "missing_user_cron_command",
+      }),
+    };
+  }
 
   return {
     job: {
@@ -5735,7 +5796,7 @@ function ParseCronJobLine(params: {
         day_of_week: user_match[5],
       },
       run_as_user: params.default_user,
-      command: user_match[6].trim(),
+      command: normalized_command,
       is_disabled,
       source_path: params.source_path,
       source_kind: params.source_kind,
@@ -5745,21 +5806,206 @@ function ParseCronJobLine(params: {
   };
 }
 
-function LooksLikeCronEntry(params: {
-  source_kind: proxmox_lxc_cron_source_kind_t;
-  raw_line: string;
+function NormalizeCronCommand(raw_command: string): string {
+  return StripCronInlineComment(raw_command).trim();
+}
+
+function StripCronInlineComment(raw_command: string): string {
+  let in_single_quote = false;
+  let in_double_quote = false;
+  let is_escaped = false;
+  for (let index = 0; index < raw_command.length; index += 1) {
+    const current_character = raw_command[index];
+    if (is_escaped) {
+      is_escaped = false;
+      continue;
+    }
+    if (current_character === "\\") {
+      is_escaped = true;
+      continue;
+    }
+    if (current_character === "'" && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
+    }
+    if (current_character === "\"" && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+    if (current_character !== "#" || in_single_quote || in_double_quote) {
+      continue;
+    }
+    const previous_character = index > 0 ? raw_command[index - 1] : " ";
+    if (index === 0 || /\s/.test(previous_character)) {
+      return raw_command.slice(0, index);
+    }
+  }
+  return raw_command;
+}
+
+function IsCronScheduleValid(params: {
+  minute: string;
+  hour: string;
+  day_of_month: string;
+  month: string;
+  day_of_week: string;
 }): boolean {
-  const trimmed_line = params.raw_line.trim();
-  if (!trimmed_line) {
+  return IsCronScheduleFieldValid({
+    value: params.minute,
+    field_kind: "minute",
+  })
+    && IsCronScheduleFieldValid({
+      value: params.hour,
+      field_kind: "hour",
+    })
+    && IsCronScheduleFieldValid({
+      value: params.day_of_month,
+      field_kind: "day_of_month",
+    })
+    && IsCronScheduleFieldValid({
+      value: params.month,
+      field_kind: "month",
+    })
+    && IsCronScheduleFieldValid({
+      value: params.day_of_week,
+      field_kind: "day_of_week",
+    });
+}
+
+function IsCronScheduleFieldValid(params: {
+  value: string;
+  field_kind: "minute" | "hour" | "day_of_month" | "month" | "day_of_week";
+}): boolean {
+  const value = params.value.trim();
+  if (!value) {
     return false;
   }
-  if (trimmed_line.startsWith("@")) {
+  const segments = value.split(",");
+  if (segments.length === 0) {
+    return false;
+  }
+  for (const segment of segments) {
+    if (!IsCronScheduleSegmentValid({
+      segment: segment.trim(),
+      field_kind: params.field_kind,
+    })) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function IsCronScheduleSegmentValid(params: {
+  segment: string;
+  field_kind: "minute" | "hour" | "day_of_month" | "month" | "day_of_week";
+}): boolean {
+  if (!params.segment) {
+    return false;
+  }
+  const step_parts = params.segment.split("/");
+  if (step_parts.length > 2) {
+    return false;
+  }
+  const base_part = step_parts[0];
+  const step_part = step_parts[1];
+  if (step_part !== undefined) {
+    const parsed_step = Number.parseInt(step_part, 10);
+    if (!Number.isInteger(parsed_step) || parsed_step <= 0) {
+      return false;
+    }
+  }
+  return IsCronScheduleBaseValid({
+    base_part,
+    field_kind: params.field_kind,
+  });
+}
+
+function IsCronScheduleBaseValid(params: {
+  base_part: string;
+  field_kind: "minute" | "hour" | "day_of_month" | "month" | "day_of_week";
+}): boolean {
+  if (params.base_part === "*") {
     return true;
   }
-  if (params.source_kind === "system" || params.source_kind === "cron_d") {
-    return /^([^\s]+\s+){6}.+/.test(trimmed_line);
+  const range_parts = params.base_part.split("-");
+  if (range_parts.length === 2) {
+    const range_start = ResolveCronTokenNumber({
+      token: range_parts[0].trim(),
+      field_kind: params.field_kind,
+    });
+    const range_end = ResolveCronTokenNumber({
+      token: range_parts[1].trim(),
+      field_kind: params.field_kind,
+    });
+    if (range_start === undefined || range_end === undefined) {
+      return false;
+    }
+    return range_start <= range_end;
   }
-  return /^([^\s]+\s+){5}.+/.test(trimmed_line);
+  return ResolveCronTokenNumber({
+    token: params.base_part,
+    field_kind: params.field_kind,
+  }) !== undefined;
+}
+
+function ResolveCronTokenNumber(params: {
+  token: string;
+  field_kind: "minute" | "hour" | "day_of_month" | "month" | "day_of_week";
+}): number | undefined {
+  const token = params.token.trim();
+  if (!token) {
+    return undefined;
+  }
+  const parsed_numeric_token = Number.parseInt(token, 10);
+  if (Number.isInteger(parsed_numeric_token)) {
+    if (params.field_kind === "minute" && parsed_numeric_token >= 0 && parsed_numeric_token <= 59) {
+      return parsed_numeric_token;
+    }
+    if (params.field_kind === "hour" && parsed_numeric_token >= 0 && parsed_numeric_token <= 23) {
+      return parsed_numeric_token;
+    }
+    if (params.field_kind === "day_of_month" && parsed_numeric_token >= 1 && parsed_numeric_token <= 31) {
+      return parsed_numeric_token;
+    }
+    if (params.field_kind === "month" && parsed_numeric_token >= 1 && parsed_numeric_token <= 12) {
+      return parsed_numeric_token;
+    }
+    if (params.field_kind === "day_of_week" && parsed_numeric_token >= 0 && parsed_numeric_token <= 7) {
+      return parsed_numeric_token;
+    }
+    return undefined;
+  }
+  const normalized_token = token.toUpperCase();
+  if (params.field_kind === "month") {
+    const month_token_map: Record<string, number> = {
+      JAN: 1,
+      FEB: 2,
+      MAR: 3,
+      APR: 4,
+      MAY: 5,
+      JUN: 6,
+      JUL: 7,
+      AUG: 8,
+      SEP: 9,
+      OCT: 10,
+      NOV: 11,
+      DEC: 12,
+    };
+    return month_token_map[normalized_token];
+  }
+  if (params.field_kind === "day_of_week") {
+    const day_of_week_token_map: Record<string, number> = {
+      SUN: 0,
+      MON: 1,
+      TUE: 2,
+      WED: 3,
+      THU: 4,
+      FRI: 5,
+      SAT: 6,
+    };
+    return day_of_week_token_map[normalized_token];
+  }
+  return undefined;
 }
 
 function IsSupportedSpecialSchedule(raw_schedule: string): boolean {

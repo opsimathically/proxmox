@@ -231,6 +231,20 @@ async function ResolveSecretFromAuth(auth: proxmox_auth_t): Promise<string> {
     });
   }
 
+  if (auth.provider === "plain") {
+    const normalized_plain_text = auth.plain_text?.trim();
+    if (!normalized_plain_text) {
+      throw new ProxmoxAuthError({
+        code: "proxmox.auth.missing_token",
+        message: "plain auth provider requires plain_text for session password.",
+        details: {
+          field: "auth.plain_text",
+        },
+      });
+    }
+    return normalized_plain_text;
+  }
+
   throw new ProxmoxPrivilegedFallbackError({
     code: "proxmox.auth.privileged_fallback_misconfigured",
     message: "Unsupported password provider for privileged session auth.",

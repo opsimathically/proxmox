@@ -179,6 +179,35 @@ test("BuildAuthProvider loads token from file and derives header.", async () => 
   rmSync(scratch_dir, { recursive: true, force: true });
 });
 
+test("BuildAuthProvider returns the plain provider when configured.", async () => {
+  const provider = BuildAuthProvider({
+    token_id: "root@pam!builder",
+    auth: {
+      provider: "plain",
+      plain_text: "plain_token_value",
+    },
+  });
+
+  assert.equal(await provider.getAuthHeader(), "PVEAPIToken root@pam!builder=plain_token_value");
+  assert.equal((await provider.getTokenFingerprint()).length, 12);
+});
+
+test("BuildAuthProvider rejects plain provider when plain_text is missing.", () => {
+  assert.throws(
+    () =>
+      BuildAuthProvider({
+        token_id: "root@pam!builder",
+        auth: {
+          provider: "plain",
+        },
+      }),
+    {
+      name: "ProxmoxAuthError",
+      message: /requires plain_text/i,
+    },
+  );
+});
+
 test("BuildAuthProvider rejects unresolved file token path.", async () => {
   const provider = BuildAuthProvider({
     token_id: "root@pam!builder",
@@ -588,7 +617,7 @@ test("BuildAuthProvider fails for unsupported provider value.", () => {
       BuildAuthProvider({
         token_id: "root@pam!builder",
         auth: { provider: "not-real" } as unknown as {
-          provider: "env" | "file" | "vault" | "sops";
+          provider: "env" | "file" | "vault" | "sops" | "plain";
         },
       }),
     {

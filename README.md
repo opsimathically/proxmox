@@ -51,6 +51,36 @@ Auth providers currently supported:
 - `file`
 - `vault`
 - `sops`
+- `plain` (disabled by default unless `security.allow_plaintext_api_key_in_file=true`)
+
+`plain` provider example (use only in controlled dev/test contexts):
+
+```json
+{
+  "security": {
+    "allow_plaintext_api_key_in_file": true
+  },
+  "clusters": [
+    {
+      "id": "example-cluster",
+      "name": "example-cluster",
+      "environment": "dev",
+      "nodes": [
+        {
+          "id": "node-a",
+          "hostname": "node-a.local",
+          "host": "192.0.2.10",
+          "token_id": "root@pam!sdk",
+          "auth": {
+            "provider": "plain",
+            "plain_text": "REPLACE_WITH_TOKEN_SECRET"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
 
 LXC shell backend:
 
@@ -60,6 +90,8 @@ LXC shell backend:
 Secret sourcing guidance:
 
 - Keep API token and SSH secret material in env/files/secret providers.
+- Prefer `env`, `vault`, or `sops` in production.
+- Use `plain` only for controlled development/testing and never commit real secrets.
 - Do not hardcode credentials in source or committed config.
 
 ### Minimal config example
@@ -847,6 +879,7 @@ Retry guidance:
 
 - Keep all credentials out of source control.
 - Prefer env/file/vault/sops secret providers.
+- Treat `plain` provider as a controlled exception; keep it disabled unless explicitly needed.
 - Keep diagnostics/logging metadata-only.
 - Use least-privilege API token and SSH credentials.
 - Keep TLS verification enabled and CA trust explicit.

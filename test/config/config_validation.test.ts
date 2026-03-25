@@ -183,6 +183,51 @@ test("ValidateConfig rejects unknown auth provider.", () => {
   });
 });
 
+test("ValidateConfig accepts plain auth provider when plaintext setting is enabled.", () => {
+  const config = BuildConfig();
+  config.security = {
+    allow_plaintext_api_key_in_file: true,
+  };
+  config.clusters[0].nodes[0].auth = {
+    provider: "plain",
+    plain_text: "plain_token_value",
+  };
+
+  const resolved = ValidateConfig({ config });
+  assert.equal(resolved.clusters[0].nodes[0].auth.provider, "plain");
+});
+
+test("ValidateConfig rejects plain auth provider when plaintext setting is disabled.", () => {
+  const config = BuildConfig();
+  config.security = {
+    allow_plaintext_api_key_in_file: false,
+  };
+  config.clusters[0].nodes[0].auth = {
+    provider: "plain",
+    plain_text: "plain_token_value",
+  };
+
+  assert.throws(
+    () => ValidateConfig({ config }),
+    /plain auth provider is disabled by security\.allow_plaintext_api_key_in_file/i,
+  );
+});
+
+test("ValidateConfig rejects plain auth provider when plain_text is empty.", () => {
+  const config = BuildConfig();
+  config.security = {
+    allow_plaintext_api_key_in_file: true,
+  };
+  config.clusters[0].nodes[0].auth = {
+    provider: "plain",
+    plain_text: "   ",
+  };
+
+  assert.throws(() => ValidateConfig({ config }), {
+    message: /plain provider requires plain_text/i,
+  });
+});
+
 test("ValidateConfig accepts privileged ticket auth configuration.", () => {
   const config = BuildConfig();
   config.clusters[0].nodes[0].privileged_auth = {
@@ -216,6 +261,24 @@ test("BuildConfigDiagnostics produces redacted startup summary and no secret val
   assert.equal(diagnostics.selected_cluster.node_count, 1);
   const has_token_key = Object.keys(diagnostics.selected_cluster).includes("token");
   assert.equal(has_token_key, false);
+});
+
+test("BuildConfigDiagnostics counts plain provider without exposing plain_text.", () => {
+  const config = BuildConfig();
+  config.security = {
+    allow_plaintext_api_key_in_file: true,
+  };
+  config.clusters[0].nodes[0].auth = {
+    provider: "plain",
+    plain_text: "diagnostics_plain_token",
+  };
+  const resolved = ValidateConfig({ config: config });
+  const diagnostics = BuildConfigDiagnostics({
+    config: resolved,
+    profile_name: "default",
+  });
+  assert.equal(diagnostics.auth_provider_counts.plain, 1);
+  assert.equal(Object.keys(diagnostics.selected_cluster).includes("token"), false);
 });
 
 test("ResolveSecrets supports sops provider token resolution.", { concurrency: false }, async () => {
@@ -279,4 +342,23 @@ test("ResolveSecrets supports vault provider token resolution.", async () => {
   });
 
   await vault_server.close();
+});
+
+test("ResolveSecrets supports plain provider token resolution.", async () => {
+  const config = BuildConfig();
+  config.security = {
+    allow_plaintext_api_key_in_file: true,
+  };
+  config.clusters[0].nodes[0].auth = {
+    provider: "plain",
+    plain_text: "resolved_plain_token",
+  };
+  const resolved = ValidateConfig({ config: config });
+  const secret_store = await ResolveSecrets({
+    config: resolved,
+  });
+
+  assert.equal(secret_store["node-a"].provider, "plain");
+  assert.equal(secret_store["node-a"].token, "resolved_plain_token");
+  assert.equal(secret_store["node-a"].token_fingerprint.length, 12);
 });

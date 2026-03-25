@@ -1319,6 +1319,20 @@ async function ResolveSecretFromAuth(auth: proxmox_auth_t, field_name: string): 
     });
   }
 
+  if (auth.provider === "plain") {
+    const normalized_plain_text = auth.plain_text?.trim();
+    if (!normalized_plain_text) {
+      throw new ProxmoxSshShellError({
+        code: "proxmox.ssh.auth_failed",
+        message: "plain auth provider requires plain_text for SSH secret.",
+        details: {
+          field: `${field_name}.plain_text`,
+        },
+      });
+    }
+    return normalized_plain_text;
+  }
+
   throw new ProxmoxSshShellError({
     code: "proxmox.ssh.auth_failed",
     message: "Unsupported SSH auth provider.",

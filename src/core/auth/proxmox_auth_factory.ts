@@ -3,6 +3,7 @@ import { EnvironmentAuthProvider } from "./environment_auth_provider";
 import { FileAuthProvider } from "./file_auth_provider";
 import { VaultAuthProvider } from "./vault_auth_provider";
 import { SopsAuthProvider } from "./sops_auth_provider";
+import { PlainAuthProvider } from "./plain_auth_provider";
 import { ProxmoxAuthError } from "../../errors/proxmox_error";
 import { proxmox_auth_provider_i } from "./auth_provider_i";
 
@@ -66,6 +67,20 @@ export function BuildAuthProvider(params: {
       return new SopsAuthProvider({
         token_id: params.token_id,
         secret_ref: params.auth.secret_ref.trim(),
+      });
+    case "plain":
+      if (!params.auth.plain_text || !params.auth.plain_text.trim()) {
+        throw new ProxmoxAuthError({
+          code: "proxmox.auth.missing_token",
+          message: "Auth provider plain requires plain_text.",
+          details: {
+            field: "auth.plain_text",
+          },
+        });
+      }
+      return new PlainAuthProvider({
+        token_id: params.token_id,
+        plain_text: params.auth.plain_text,
       });
     default:
       throw new ProxmoxAuthError({
